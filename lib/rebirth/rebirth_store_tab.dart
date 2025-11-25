@@ -1,5 +1,14 @@
 import 'dart:math' as math;
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../cards/game_card_models.dart';
+import '../cards/card_catalog.dart';
+
+/// Key used to store the player's collection in SharedPreferences.
+const String kPlayerCollectionKey = 'player_collection';
 
 /// Model for a card pack configuration.
 /// You can later add more packs with different images / names.
@@ -13,53 +22,16 @@ class CardPackConfig {
   });
 }
 
-/// Main widget for the Rebirth tab.
-/// Shows subtabs: Store, Deck, Collection.
-class RebirthScreen extends StatelessWidget {
-  final double currentGold;
-
-  const RebirthScreen({
-    super.key,
-    required this.currentGold,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 4,
-      child: Column(
-        children: [
-          const TabBar(
-            tabs: [
-              Tab(text: 'Store'),
-              Tab(text: 'Deck'),
-              Tab(text: 'Collection'),
-              Tab(text: 'Pickaxe'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                RebirthStoreTab(currentGold: currentGold),
-                const _DeckTabPlaceholder(),
-                const _CollectionTabPlaceholder(),
-                const _PickaxeTabPlaceholder(),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Store tab for Rebirth.
 class RebirthStoreTab extends StatelessWidget {
   final double currentGold;
+
+  /// Callback to actually spend refined gold in the parent.
+  final ValueChanged<double> onSpendGold;
 
   const RebirthStoreTab({
     super.key,
     required this.currentGold,
+    required this.onSpendGold,
   });
 
   @override
@@ -84,28 +56,11 @@ class RebirthStoreTab extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'Rebirth Store',
+              'Buy Card Packs',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
-                shadows: [
-                  Shadow(
-                    blurRadius: 4,
-                    color: Colors.black54,
-                    offset: Offset(1, 1),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            Text(
-              'Gold: ${currentGold.toStringAsFixed(0)}',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.amber,
                 shadows: [
                   Shadow(
                     blurRadius: 4,
@@ -121,7 +76,11 @@ class RebirthStoreTab extends StatelessWidget {
             ...packs.map(
                   (pack) => Padding(
                 padding: const EdgeInsets.only(bottom: 16.0),
-                child: RebirthPackTile(config: pack),
+                child: RebirthPackTile(
+                  config: pack,
+                  currentGold: currentGold,
+                  onSpendGold: onSpendGold,
+                ),
               ),
             ),
           ],
@@ -134,15 +93,22 @@ class RebirthStoreTab extends StatelessWidget {
 /// A single card-pack widget with:
 /// - Name above
 /// - Simple rectangular image "card"
-/// - Left/right arrows to change level (1–10)
+/// - Left/right arrows to change level (0–10)
 /// - Cost (10^level)
+/// - Buy button (random card from pack)
 /// - Info button below
 class RebirthPackTile extends StatefulWidget {
   final CardPackConfig config;
+  final double currentGold;
+
+  /// Callback used to deduct gold in the parent (IdleGameScreen).
+  final ValueChanged<double> onSpendGold;
 
   const RebirthPackTile({
     super.key,
     required this.config,
+    required this.currentGold,
+    required this.onSpendGold,
   });
 
   @override
@@ -183,8 +149,202 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
     return _cost.toStringAsFixed(0);
   }
 
+  int _expToNextLevel(int level) {
+    // Exp to next level: (level + 1)^3
+    return math.pow(level + 1, 3).toInt();
+  }
+
+  Future<void> _onBuyPressed(BuildContext context) async {
+    final canAfford = widget.currentGold >= _cost;
+    if (!canAfford) {
+      // Should be disabled anyway, but guard just in case.
+      return;
+    }
+
+    // 1) Get all cards for this pack from the catalog.
+    final cards = CardCatalog.instance.getCardsForPack(widget.config.id);
+    if (cards.isEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => const AlertDialog(
+          title: Text('No Cards Defined'),
+          content: Text('There are no cards defined for this pack yet.'),
+        ),
+      );
+      return;
+    }
+
+    // 2) Choose a random card uniformly.
+    final rng = math.Random();
+    final GameCard chosen = cards[rng.nextInt(cards.length)];
+
+    // 3) Load player collection from SharedPreferences.
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(kPlayerCollectionKey);
+    List<OwnedCard> collection = [];
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw) as List<dynamic>;
+        collection = decoded
+            .map((e) => OwnedCard.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (_) {
+        // If parsing fails, start with empty collection.
+        collection = [];
+      }
+    }
+
+    // Find existing card in collection (if any).
+    final index = collection.indexWhere((c) => c.cardId == chosen.id);
+
+    final int expGain = _cost.round();
+    int totalExp = expGain;
+    int level;
+    int startingLevel;
+    int startingExp;
+    int levelsGained = 0;
+
+    if (index == -1) {
+      // New card: start from the card's base level and 0 exp, then add expGain.
+      level = chosen.baseLevel;
+      startingLevel = level;
+      startingExp = 0;
+      totalExp = expGain;
+
+      // Apply level-up loop.
+      while (true) {
+        final needed = _expToNextLevel(level);
+        if (totalExp >= needed) {
+          totalExp -= needed;
+          level += 1;
+          levelsGained += 1;
+        } else {
+          break;
+        }
+      }
+
+      final owned = OwnedCard(
+        cardId: chosen.id,
+        level: level,
+        experience: totalExp,
+      );
+      collection.add(owned);
+    } else {
+      // Existing card: add exp on top of existing.
+      final current = collection[index];
+      level = current.level;
+      startingLevel = current.level;
+      startingExp = current.experience;
+
+      totalExp = current.experience + expGain;
+
+      while (true) {
+        final needed = _expToNextLevel(level);
+        if (totalExp >= needed) {
+          totalExp -= needed;
+          level += 1;
+          levelsGained += 1;
+        } else {
+          break;
+        }
+      }
+
+      final updated = current.copyWith(
+        level: level,
+        experience: totalExp,
+      );
+      collection[index] = updated;
+    }
+
+    // 4) Save updated collection back to SharedPreferences.
+    final encoded = jsonEncode(
+      collection.map((c) => c.toJson()).toList(),
+    );
+    await prefs.setString(kPlayerCollectionKey, encoded);
+
+    // 5) Show result popup.
+    final int nextLevelExpRequirement = _expToNextLevel(level);
+    final buffer = StringBuffer()
+      ..writeln('You got ${chosen.name}!')
+      ..writeln()
+      ..writeln('Current Level: $level');
+
+    if (levelsGained > 0) {
+      buffer.writeln('Level up! (+$levelsGained)');
+    }
+
+    buffer
+      ..writeln(
+          'Experience: $totalExp / $nextLevelExpRequirement (toward next level)')
+      ..writeln()
+      ..writeln('Pack cost added as experience: +$expGain');
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Card Acquired'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Card image (for now, use the pack background as a stand-in).
+            SizedBox(
+              width: 120,
+              height: 180,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  'assets/card_background_lux_aurea.png',
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Color(0xFF333333),
+                            Color(0xFF777777),
+                          ],
+                        ),
+                      ),
+                      child: const Center(
+                        child: Text(
+                          'Card Image\nMissing',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              buffer.toString(),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+
+    // 6) Finally, actually spend the gold via the callback.
+    widget.onSpendGold(_cost);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bool canAfford = widget.currentGold >= _cost;
+
     return Card(
       color: Colors.black.withOpacity(0.6),
       shape: RoundedRectangleBorder(
@@ -300,6 +460,21 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
 
             const SizedBox(height: 12),
 
+            // BUY BUTTON
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: canAfford
+                    ? () async {
+                  await _onBuyPressed(context);
+                }
+                    : null,
+                child: const Text('Buy Pack'),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
             // Info button
             Align(
               alignment: Alignment.center,
@@ -329,84 +504,6 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// Placeholder for the Deck subtab.
-class _DeckTabPlaceholder extends StatelessWidget {
-  const _DeckTabPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        'Deck management coming soon...',
-        style: TextStyle(
-          fontSize: 18,
-          color: Colors.white,
-          shadows: [
-            Shadow(
-              blurRadius: 4,
-              color: Colors.black54,
-              offset: Offset(1, 1),
-            ),
-          ],
-        ),
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
-}
-
-/// Placeholder for the Collection subtab.
-class _CollectionTabPlaceholder extends StatelessWidget {
-  const _CollectionTabPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        'Card collection coming soon...',
-        style: TextStyle(
-          fontSize: 18,
-          color: Colors.white,
-          shadows: [
-            Shadow(
-              blurRadius: 4,
-              color: Colors.black54,
-              offset: Offset(1, 1),
-            ),
-          ],
-        ),
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
-}
-
-/// Placeholder for the Pickaxe subtab.
-class _PickaxeTabPlaceholder extends StatelessWidget {
-  const _PickaxeTabPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        'Card collection coming soon...',
-        style: TextStyle(
-          fontSize: 18,
-          color: Colors.white,
-          shadows: [
-            Shadow(
-              blurRadius: 4,
-              color: Colors.black54,
-              offset: Offset(1, 1),
-            ),
-          ],
-        ),
-        textAlign: TextAlign.center,
       ),
     );
   }
