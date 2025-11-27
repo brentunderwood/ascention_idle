@@ -33,14 +33,14 @@ class CardCatalog {
   static final Map<String, GameCard> _cardsById = {
     'lux_aurea_1': GameCard(
       id: 'lux_aurea_1',
-      name: 'Lux_aurea_1',
+      name: 'Fool\'s Gold',
       rank: 1,
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
-      artAsset: 'assets/card_background_lux_aurea.png',
-      shortDescription: 'Rank 1 Lux Aurea upgrade card.',
+      backgroundAsset: 'assets/lux_aurea/card_base_lux_aurea.png',
+      artAsset: 'assets/lux_aurea/gold/lv_1_fools_gold.png',
+      shortDescription: 'Ooh, shiny...',
       longDescription:
       'A rank 1 Lux Aurea upgrade card from the Lux Aurea pack.\n'
           'Its behavior is defined by the shared lux_aurea_upgrade effect.',
@@ -57,7 +57,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 2 Lux Aurea upgrade card.',
       longDescription:
@@ -76,7 +76,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 3 Lux Aurea upgrade card.',
       longDescription:
@@ -95,7 +95,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 4 Lux Aurea upgrade card.',
       longDescription:
@@ -114,7 +114,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 5 Lux Aurea upgrade card.',
       longDescription:
@@ -133,7 +133,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 6 Lux Aurea upgrade card.',
       longDescription:
@@ -152,7 +152,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 7 Lux Aurea upgrade card.',
       longDescription:
@@ -171,7 +171,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 8 Lux Aurea upgrade card.',
       longDescription:
@@ -190,7 +190,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 9 Lux Aurea upgrade card.',
       longDescription:
@@ -209,7 +209,7 @@ class CardCatalog {
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'lux_aurea',
-      backgroundAsset: 'assets/card_background_lux_aurea.png',
+      backgroundAsset: 'assets/card_base_lux_aurea.png',
       artAsset: 'assets/card_background_lux_aurea.png',
       shortDescription: 'Rank 10 Lux Aurea upgrade card.',
       longDescription:

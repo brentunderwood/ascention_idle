@@ -16,6 +16,7 @@ const String kGoldOreKey = 'gold_ore';
 const String kGoldKey = 'gold';
 const String kTotalGoldOreKey = 'total_gold_ore';
 const String kOrePerSecondKey = 'ore_per_second';
+const String kBonusOrePerSecondKey = 'bonus_ore_per_second';
 const String kLastActiveKey = 'last_active_millis';
 const String kRebirthCountKey = 'rebirth_count';
 const String kTotalRefinedGoldKey = 'total_refined_gold';
@@ -58,6 +59,7 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
   double _totalGoldOre = 0;
   double _gold = 0.0;
   double _orePerSecond = 0;
+  double _bonusOrePerSecond = 1;
 
   int _rebirthCount = 0;
   double _totalRefinedGold = 0;
@@ -120,6 +122,7 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
     final storedTotalGoldOre = _prefs!.getDouble(kTotalGoldOreKey);
     final storedGold = _prefs!.getDouble(kGoldKey);
     final storedOrePerSecond = _prefs!.getDouble(kOrePerSecondKey);
+    final storedBonusOrePerSecond = _prefs!.getDouble(kBonusOrePerSecondKey);
     final storedLastActive = _prefs!.getInt(kLastActiveKey);
     final storedRebirthCount = _prefs!.getInt(kRebirthCountKey);
     final storedTotalRefinedGold = _prefs!.getDouble(kTotalRefinedGoldKey);
@@ -129,7 +132,8 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
       _goldOre = storedGoldOre ?? 0;
       _totalGoldOre = storedTotalGoldOre ?? 0;
       _gold = storedGold ?? 0;
-      _orePerSecond = storedOrePerSecond ?? 1;
+      _orePerSecond = storedOrePerSecond ?? 0;
+      _bonusOrePerSecond = storedBonusOrePerSecond ?? 0;
       _rebirthCount = storedRebirthCount ?? 0;
       _totalRefinedGold = storedTotalRefinedGold ?? 0;
       _rebirthGoal = storedRebirthGoal ?? 'mine_gold';
@@ -147,6 +151,7 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
     await _prefs!.setDouble(kTotalGoldOreKey, _totalGoldOre);
     await _prefs!.setDouble(kGoldKey, _gold);
     await _prefs!.setDouble(kOrePerSecondKey, _orePerSecond);
+    await _prefs!.setDouble(kBonusOrePerSecondKey, _bonusOrePerSecond);
     await _prefs!.setInt(kRebirthCountKey, _rebirthCount);
     await _prefs!.setDouble(kTotalRefinedGoldKey, _totalRefinedGold);
     await _prefs!.setString(kRebirthGoalKey, _rebirthGoal);
@@ -171,7 +176,7 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
 
       setState(() {
         _goldOre += _orePerSecond;
-        _totalGoldOre += _orePerSecond;
+        _totalGoldOre += _orePerSecond * _bonusOrePerSecond;
       });
 
       if (momentumChanged) {
@@ -194,12 +199,12 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
     final seconds = diff.inSeconds;
 
     // Ignore very short gaps (e.g., app switch for a second)
-    if (seconds <= 5) {
+    if (seconds <= 60) {
       await _saveProgress();
       return;
     }
 
-    final earned = seconds * _orePerSecond;
+    final earned = seconds * _orePerSecond * _bonusOrePerSecond;
 
     setState(() {
       _goldOre += earned;
@@ -248,12 +253,10 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
     if (_totalGoldOre <= 0) return 0;
 
     // level = floor(log_100(total_gold_ore))
-    final levelRaw = math.log(_totalGoldOre) / math.log(100);
-    final level = levelRaw.floor();
-    if (level <= 0) return 0;
+    double levelRaw = math.log(_totalGoldOre) / math.log(100);
+    levelRaw *= levelRaw;
 
-    // gold = level * (level + 1) / 2
-    return level * (level + 1) / 2.0;
+    return 1.0*levelRaw.floor();
   }
 
   Future<void> _attemptRebirth() async {
@@ -305,6 +308,7 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
       _goldOre = 0;
       _totalGoldOre = 0;
       _orePerSecond = 0;
+      _bonusOrePerSecond = 1;
 
       // Reset momentum for the new run
       _momentumClicks = 0;
@@ -337,7 +341,7 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
   ///
   /// For other goals (e.g. create_antimatter):
   /// same structure but using the antimatter pickaxe levels.
-  Future<double> _computeOrePerClick() async {
+  Future<double> _computeOrePerClick({bool no_bonuses=false}) async {
     _prefs ??= await SharedPreferences.getInstance();
 
     int _getLevel(String id) {
@@ -345,57 +349,43 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
       return _prefs!.getInt(key) ?? 1;
     }
 
+    final int baseLevel;
+    final int bonusLevel;
     if (_rebirthGoal == 'mine_gold') {
-      final baseLevel = _getLevel('base_gold_per_click');
-      final bonusGoldLevel = _getLevel('bonus_gold_per_click');
-      final momentumValueLevel = _getLevel('momentum_value');
-      final momentumCapLevel = _getLevel('momentum_cap');
-
-      // base term: 1.25 ^ baseLevel
-      final baseTerm = math.pow(1.25, baseLevel).toDouble();
-
-      // bonus term: orePerSecond * bonusLevel / 10000
-      final bonusTerm = _orePerSecond * (bonusGoldLevel / 10000.0);
-
-      final raw = baseTerm + bonusTerm;
-
-      // momentum multiplier
-      double momentumMultiplier =
-          1 + _momentumClicks * math.pow(momentumValueLevel, 0.5) / 1000.0;
-
-      // cap: 1 + [momentum cap level] / 10
-      final maxMultiplier = 1 + momentumCapLevel / 10.0;
-      if (momentumMultiplier > maxMultiplier) {
-        momentumMultiplier = maxMultiplier;
-      }
-
-      return raw * momentumMultiplier;
+      baseLevel = _getLevel('base_gold_per_click');
+      bonusLevel = _getLevel('bonus_gold_per_click');
     } else {
-      final baseLevel = _getLevel('base_antimatter_per_click');
-      final bonusLevel = _getLevel('bonus_antimatter_per_click');
-      final momentumValueLevel = _getLevel('momentum_value');
-      final momentumCapLevel = _getLevel('momentum_cap');
-
-      // base term: 1.25 ^ baseLevel
-      final baseTerm = math.pow(1.25, baseLevel).toDouble();
-
-      // bonus term: orePerSecond * bonusLevel / 10000
-      final bonusTerm = _orePerSecond * (bonusLevel / 10000.0);
-
-      final raw = baseTerm + bonusTerm;
-
-      // momentum multiplier
-      double momentumMultiplier =
-          1 + _momentumClicks * math.pow(momentumValueLevel, 0.5) / 1000.0;
-
-      // cap: 1 + [momentum cap level] / 10
-      final maxMultiplier = 1 + momentumCapLevel / 10.0;
-      if (momentumMultiplier > maxMultiplier) {
-        momentumMultiplier = maxMultiplier;
-      }
-
-      return raw * momentumMultiplier;
+      baseLevel = _getLevel('base_antimatter_per_click');
+      bonusLevel = _getLevel('bonus_antimatter_per_click');
     }
+
+    final momentumValueLevel = _getLevel('momentum_value');
+    final momentumCapLevel = _getLevel('momentum_cap');
+
+    // base term: 1.25 ^ baseLevel
+    final baseTerm = math.pow(1.25, baseLevel).toDouble();
+
+    // bonus term: orePerSecond * bonusLevel / 10000
+    final bonusTerm = _orePerSecond * (bonusLevel / 10000.0);
+
+    final double raw;
+    if(no_bonuses){
+      raw = baseTerm;
+    }else{
+      raw = baseTerm + bonusTerm;
+    }
+
+    // momentum multiplier
+    double momentumMultiplier =
+        1 + _momentumClicks * math.pow(momentumValueLevel, 0.5) / 10000.0;
+
+    // cap: 1 + [momentum cap level] / 10
+    final maxMultiplier = 1 + momentumCapLevel / 10.0;
+    if (momentumMultiplier > maxMultiplier) {
+      momentumMultiplier = maxMultiplier;
+    }
+
+    return raw * momentumMultiplier;
   }
 
   /// Helper: recompute and cache the current per-click amount for preview text.
@@ -603,12 +593,19 @@ class _IdleGameScreenState extends State<IdleGameScreen> {
                 _lastClickTime = now;
 
                 // Compute ore per click based on rebirth goal + upgrades + momentum
-                final orePerClick = await _computeOrePerClick();
+                double bonusDelta = 0;
+                double orePerClick = await _computeOrePerClick();
+                double clickCap = await _computeOrePerClick(no_bonuses: true) + 10 * _orePerSecond * _bonusOrePerSecond;
+                if(orePerClick > clickCap){
+                  bonusDelta = orePerClick / clickCap;
+                }
 
                 setState(() {
                   _goldOre += orePerClick;
                   _totalGoldOre += orePerClick;
                   _lastComputedOrePerClick = orePerClick;
+                  _orePerSecond += bonusDelta / 1000000;
+                  _bonusOrePerSecond += bonusDelta / 1000000;
                 });
                 _saveProgress();
               },

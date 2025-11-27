@@ -2,17 +2,18 @@ import 'dart:math' as math;
 
 /// Central place for all card effect formulas.
 ///
-/// For Lux Aurea cards, the intended behavior is:
+/// These helpers implement a generic "upgrade card" behavior:
+///
 ///   Resources per tick:     level * 10^(rank - 1)
 ///   Cost scaling factor:    1 + 9 / level
 ///   Base cost:              10^(rank * (1 + 0.99^level))
 ///   Exp to next level:      (level + 1)^3
 ///
-/// Game logic should call these helpers whenever it needs to
-/// evaluate what a card does at a given level.
+/// Any card (Lux Aurea or otherwise) that follows this pattern
+/// can use these functions directly.
 class CardEffects {
-  /// Resources per tick for Lux Aurea upgrade cards.
-  static double luxAureaResourcesPerTick({
+  /// Resources per tick for an upgrade-style card.
+  static double resourcesPerTick({
     required int rank,
     required int level,
   }) {
@@ -20,8 +21,8 @@ class CardEffects {
     return level * math.pow(10, rank - 1).toDouble();
   }
 
-  /// Cost scaling factor for Lux Aurea upgrade cards.
-  static double luxAureaCostScalingFactor({
+  /// Cost scaling factor for upgrade-style cards.
+  static double costScalingFactor({
     required int level,
   }) {
     // 1 + 9 / level
@@ -29,8 +30,8 @@ class CardEffects {
     return 1.0 + 9.0 / level;
   }
 
-  /// Base cost for Lux Aurea upgrade cards.
-  static double luxAureaBaseCost({
+  /// Base cost for upgrade-style cards.
+  static double baseCost({
     required int rank,
     required int level,
   }) {
@@ -39,8 +40,8 @@ class CardEffects {
     return math.pow(10, inner).toDouble();
   }
 
-  /// Experience required to reach the next level for Lux Aurea cards.
-  static int luxAureaExpToNextLevel({
+  /// Experience required to reach the next level.
+  static int expToNextLevel({
     required int level,
   }) {
     // (level + 1)^3

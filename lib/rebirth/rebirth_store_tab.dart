@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../cards/game_card_models.dart';
 import '../cards/card_catalog.dart';
+import '../cards/game_card_face.dart';
 
 /// Key used to store the player's collection in SharedPreferences.
 const String kPlayerCollectionKey = 'player_collection';
@@ -20,6 +21,100 @@ class CardPackConfig {
     required this.id,
     required this.name,
   });
+}
+
+/// Result of drawing a card from a pack, including any experience multiplier.
+class CardDrawResult {
+  final GameCard card;
+  final int expMultiplier;
+
+  const CardDrawResult({
+    required this.card,
+    required this.expMultiplier,
+  });
+}
+
+/// Helper to draw a card from a given pack with a specified pack level.
+///
+/// For the "lux_aurea" pack, uses the custom distribution:
+///   r = (random in [0,1)) * pack_level
+///   card_rank = 1
+///   while r >= ((pack_level) / (pack_level + 1)) ^ card_rank:
+///       r -= ((pack_level) / (pack_level + 1)) ^ card_rank
+///       card_rank += 1
+///
+///   final_rank = ((card_rank - 1) % 10) + 1   // map to [1..10]
+///   exp_multiplier = 10 ^ floor((card_rank - 1) / 10)
+///
+/// The card selected is the one whose [GameCard.rank] == final_rank.
+/// If no such card exists in [cards], falls back to uniform selection.
+///
+/// For other packs, falls back to uniform selection with expMultiplier = 1.
+CardDrawResult _drawCardForPack({
+  required List<GameCard> cards,
+  required String packId,
+  required int packLevel,
+  required math.Random rng,
+}) {
+  if (cards.isEmpty) {
+    throw StateError('Cannot draw from empty card list.');
+  }
+
+  // Ensure packLevel is at least 1 to avoid degenerate behavior.
+  final double level = packLevel < 0 ? 0 : packLevel/4;
+
+  if (packId == 'lux_aurea') {
+    // Custom Lux Aurea rank distribution.
+    double r = rng.nextDouble() * (level+1);
+    int cardRank = 0;
+
+    while (true) {
+      final double probMass =
+      math.pow(level / (level + 1), cardRank).toDouble();
+
+      // Standard "consume mass" sampling: when r < mass, we stop.
+      if (r <= probMass) {
+        cardRank++;
+        break;
+      }
+
+      r -= probMass;
+      cardRank++;
+    }
+
+    // Map to [1..10] as described:
+    // final_rank = card_rank % 10, but avoid 0 by remapping.
+    final int finalRank = ((cardRank-1) % 10) + 1;
+
+    // exp_multiplier = 10 ^ floor((card_rank - 1) / 10)
+    final int expMultiplier =
+    math.pow(10, (cardRank - 1) ~/ 10).toInt();
+
+    // Find all cards with this rank in the pack.
+    final List<GameCard> rankMatches = cards
+        .where((c) => c.rank == finalRank)
+        .toList(growable: false);
+
+    GameCard chosen;
+    if (rankMatches.isNotEmpty) {
+      chosen = rankMatches[rng.nextInt(rankMatches.length)];
+    } else {
+      // Fallback: uniform from the pack if no card of that rank exists.
+      chosen = cards[rng.nextInt(cards.length)];
+    }
+
+    return CardDrawResult(
+      card: chosen,
+      expMultiplier: expMultiplier,
+    );
+  }
+
+  // Default behavior for other packs: uniform selection, no bonus multiplier.
+  final GameCard uniform = cards[rng.nextInt(cards.length)];
+  return CardDrawResult(
+    card: uniform,
+    expMultiplier: 1,
+  );
 }
 
 class RebirthStoreTab extends StatelessWidget {
@@ -174,9 +269,16 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
       return;
     }
 
-    // 2) Choose a random card uniformly.
+    // 2) Choose a card according to pack-specific logic.
     final rng = math.Random();
-    final GameCard chosen = cards[rng.nextInt(cards.length)];
+    final drawResult = _drawCardForPack(
+      cards: cards,
+      packId: widget.config.id,
+      packLevel: _currentLevel,
+      rng: rng,
+    );
+    final GameCard chosen = drawResult.card;
+    final int expMultiplierIfOwned = drawResult.expMultiplier;
 
     // 3) Load player collection from SharedPreferences.
     final prefs = await SharedPreferences.getInstance();
@@ -197,7 +299,10 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
     // Find existing card in collection (if any).
     final index = collection.indexWhere((c) => c.cardId == chosen.id);
 
-    final int expGain = _cost.round();
+    final int baseExp = _cost.round();
+    final int expGain =
+    index == -1 ? baseExp : baseExp * expMultiplierIfOwned;
+
     int totalExp = expGain;
     int level;
     int startingLevel;
@@ -277,7 +382,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
       ..writeln(
           'Experience: $totalExp / $nextLevelExpRequirement (toward next level)')
       ..writeln()
-      ..writeln('Pack cost added as experience: +$expGain');
+      ..writeln('Pack experience gained: +$expGain');
 
     await showDialog<void>(
       context: context,
@@ -286,41 +391,11 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Card image (for now, use the pack background as a stand-in).
-            SizedBox(
+            // Use the shared widget that layers background + art
+            GameCardFace(
+              card: chosen,
               width: 120,
               height: 180,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.asset(
-                  'assets/card_background_lux_aurea.png',
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Color(0xFF333333),
-                            Color(0xFF777777),
-                          ],
-                        ),
-                      ),
-                      child: const Center(
-                        child: Text(
-                          'Card Image\nMissing',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 14,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
             ),
             const SizedBox(height: 12),
             Text(
@@ -386,7 +461,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
                 ),
                 const SizedBox(width: 8),
 
-                // Real card image (falls back to placeholder if asset is missing)
+                // Pack image (still just a pack icon, not the individual card).
                 Container(
                   width: 90,
                   height: 140,
@@ -400,7 +475,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: Image.asset(
-                      'assets/card_pack_lux_aurea.png',
+                      'assets/lux_aurea/card_pack_lux_aurea.png',
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
                         return Container(
