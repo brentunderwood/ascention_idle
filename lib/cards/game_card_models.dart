@@ -1,5 +1,31 @@
 import 'package:flutter/foundation.dart';
 
+/// A target that card effects can act on.
+///
+/// IdleGameScreen's State implements this, so card effects can call:
+///  - addOrePerSecond(...)
+///  - addOre(...)
+///
+/// You can extend this later with more operations as needed.
+abstract class IdleGameEffectTarget {
+  void addOrePerSecond(double amount);
+  void addOre(double amount);
+  void addBaseOrePerClick(double amount);
+}
+
+/// Signature for a card effect function.
+///
+/// - [target] is the current run's game state (IdleGameScreen state),
+///   but seen only through the [IdleGameEffectTarget] interface.
+/// - [cardLevel] is the player's level for that card.
+/// - [upgradesThisRun] is how many times this card has been upgraded
+///   so far in the *current* run.
+typedef CardEffectFn = void Function(
+    IdleGameEffectTarget target,
+    int cardLevel,
+    int upgradesThisRun,
+    );
+
 /// Immutable definition for a card "template" in the game.
 /// This is the master data describing what a card IS,
 /// regardless of how many copies a player owns.
@@ -11,11 +37,10 @@ class GameCard {
   /// User-facing name (e.g. "Novice Prospector").
   final String name;
 
-  /// Rarity / rank (you can define your own scale, e.g. 1–5).
+  /// Rarity / rank (you can define your own scale, e.g. 1–5 or 1–10).
   final int rank;
 
-  /// Card level cap or base level behavior can be defined later.
-  /// For now this is a "design rank" and not the player's upgrade level.
+  /// Design-time base level (not the player's upgrade level).
   final int baseLevel;
   final int evolutionLevel;
 
@@ -37,13 +62,14 @@ class GameCard {
   /// Longer explanation of what the card does.
   final String longDescription;
 
-  /// A logical "effect ID" used by your game logic to decide how the card
-  /// modifies the run (e.g. "lux_gold_per_second", "antimatter_click_boost").
-  final String effectId;
-
-  /// Optional parameter payload for the effect (e.g. magnitude, scaling).
-  /// This lets you tune many cards' behavior without new code each time.
-  final Map<String, dynamic> effectParams;
+  /// Optional effect method that can be invoked when this card is
+  /// upgraded during a run.
+  ///
+  /// Signature:
+  ///   (IdleGameEffectTarget target, int cardLevel, int upgradesThisRun)
+  ///
+  /// You can call this from the Upgrades tab whenever a purchase is made.
+  final CardEffectFn? cardEffect;
 
   const GameCard({
     required this.id,
@@ -57,8 +83,7 @@ class GameCard {
     this.iconAsset,
     required this.shortDescription,
     required this.longDescription,
-    required this.effectId,
-    this.effectParams = const {}
+    this.cardEffect,
   });
 }
 
@@ -111,7 +136,6 @@ class OwnedCard {
     );
   }
 }
-
 
 /// Simple data model for a deck: a list of card IDs.
 /// Any per-card quantities inside a deck can be encoded later if needed.

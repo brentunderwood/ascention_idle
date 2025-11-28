@@ -12,14 +12,17 @@ import '../cards/game_card_face.dart';
 const String kPlayerCollectionKey = 'player_collection';
 
 /// Model for a card pack configuration.
-/// You can later add more packs with different images / names.
 class CardPackConfig {
   final String id;
   final String name;
 
+  /// Image asset for the pack art shown in the store.
+  final String packImageAsset;
+
   const CardPackConfig({
     required this.id,
     required this.name,
+    required this.packImageAsset,
   });
 }
 
@@ -34,25 +37,20 @@ class CardDrawResult {
   });
 }
 
-/// Helper to draw a card from a given pack with a specified pack level.
+/// Shared probability distribution for *all* packs.
 ///
-/// For the "lux_aurea" pack, uses the custom distribution:
-///   r = (random in [0,1)) * pack_level
-///   card_rank = 1
-///   while r >= ((pack_level) / (pack_level + 1)) ^ card_rank:
-///       r -= ((pack_level) / (pack_level + 1)) ^ card_rank
-///       card_rank += 1
-///
-///   final_rank = ((card_rank - 1) % 10) + 1   // map to [1..10]
-///   exp_multiplier = 10 ^ floor((card_rank - 1) / 10)
-///
-/// The card selected is the one whose [GameCard.rank] == final_rank.
-/// If no such card exists in [cards], falls back to uniform selection.
-///
-/// For other packs, falls back to uniform selection with expMultiplier = 1.
+/// The flow:
+/// 1. Sample a raw "cardRank" using a geometric-like distribution based on
+///    the pack level.
+/// 2. Map that to a "finalRank" in [1..10].
+/// 3. Compute an exp multiplier: 10^(floor((cardRank - 1) / 10)).
+/// 4. Attempt to pick a card of that rank from the pack.
+///    - If none exists, walk DOWN in rank (finalRank-1, finalRank-2, ...)
+///      and pick from the highest lower rank that exists.
+///    - If still none exist, fall back to uniform random from the pack.
 CardDrawResult _drawCardForPack({
   required List<GameCard> cards,
-  required String packId,
+  required String packId, // kept for future per-pack tweaks if needed
   required int packLevel,
   required math.Random rng,
 }) {
@@ -60,60 +58,67 @@ CardDrawResult _drawCardForPack({
     throw StateError('Cannot draw from empty card list.');
   }
 
-  // Ensure packLevel is at least 1 to avoid degenerate behavior.
-  final double level = packLevel < 0 ? 0 : packLevel/4;
+  // Ensure packLevel is at least 0 to avoid degenerate behavior.
+  // The scaling here is what you already had; leaving it intact.
+  final double level = packLevel < 0 ? 0 : packLevel / 4;
 
-  if (packId == 'lux_aurea') {
-    // Custom Lux Aurea rank distribution.
-    double r = rng.nextDouble() * (level+1);
-    int cardRank = 0;
+  // --- Step 1: Sample a raw "cardRank" with geometric-like distribution -----
+  double r = rng.nextDouble() * (level + 1);
+  int cardRank = 0;
 
-    while (true) {
-      final double probMass =
-      math.pow(level / (level + 1), cardRank).toDouble();
+  while (true) {
+    final double probMass =
+    math.pow(level / (level + 1), cardRank).toDouble();
 
-      // Standard "consume mass" sampling: when r < mass, we stop.
-      if (r <= probMass) {
-        cardRank++;
-        break;
-      }
-
-      r -= probMass;
+    if (r <= probMass) {
       cardRank++;
+      break;
     }
 
-    // Map to [1..10] as described:
-    // final_rank = card_rank % 10, but avoid 0 by remapping.
-    final int finalRank = ((cardRank-1) % 10) + 1;
-
-    // exp_multiplier = 10 ^ floor((card_rank - 1) / 10)
-    final int expMultiplier =
-    math.pow(10, (cardRank - 1) ~/ 10).toInt();
-
-    // Find all cards with this rank in the pack.
-    final List<GameCard> rankMatches = cards
-        .where((c) => c.rank == finalRank)
-        .toList(growable: false);
-
-    GameCard chosen;
-    if (rankMatches.isNotEmpty) {
-      chosen = rankMatches[rng.nextInt(rankMatches.length)];
-    } else {
-      // Fallback: uniform from the pack if no card of that rank exists.
-      chosen = cards[rng.nextInt(cards.length)];
-    }
-
-    return CardDrawResult(
-      card: chosen,
-      expMultiplier: expMultiplier,
-    );
+    r -= probMass;
+    cardRank++;
   }
 
-  // Default behavior for other packs: uniform selection, no bonus multiplier.
-  final GameCard uniform = cards[rng.nextInt(cards.length)];
+  // --- Step 2: Map to final rank in [1..10] ---------------------------------
+  // final_rank = ((card_rank - 1) % 10) + 1
+  final int finalRank = ((cardRank - 1) % 10) + 1;
+
+  // --- Step 3: Experience multiplier ----------------------------------------
+  // exp_multiplier = 10 ^ floor((card_rank - 1) / 10)
+  final int expMultiplier =
+  math.pow(10, (cardRank - 1) ~/ 10).toInt();
+
+  // --- Step 4: Find a card with that rank, with "step-down" fallback --------
+  List<GameCard> rankMatches = cards
+      .where((c) => c.rank == finalRank)
+      .toList(growable: false);
+
+  // If no card exists at that rank, walk DOWN in rank until we find cards.
+  if (rankMatches.isEmpty) {
+    int searchRank = finalRank - 1;
+    while (searchRank >= 1 && rankMatches.isEmpty) {
+      final candidates = cards
+          .where((c) => c.rank == searchRank)
+          .toList(growable: false);
+      if (candidates.isNotEmpty) {
+        rankMatches = candidates;
+        break;
+      }
+      searchRank--;
+    }
+  }
+
+  GameCard chosen;
+  if (rankMatches.isNotEmpty) {
+    chosen = rankMatches[rng.nextInt(rankMatches.length)];
+  } else {
+    // As an absolute fallback (e.g., if all ranks are weird), pick uniformly.
+    chosen = cards[rng.nextInt(cards.length)];
+  }
+
   return CardDrawResult(
-    card: uniform,
-    expMultiplier: 1,
+    card: chosen,
+    expMultiplier: expMultiplier,
   );
 }
 
@@ -135,10 +140,12 @@ class RebirthStoreTab extends StatelessWidget {
       CardPackConfig(
         id: 'lux_aurea',
         name: 'Lux Aurea',
+        packImageAsset: 'assets/lux_aurea/card_pack_lux_aurea.png',
       ),
       CardPackConfig(
-        id: 'vita_aurum',
-        name: 'Vita Aurum',
+        id: 'vita_orum',
+        name: 'Vita Orum',
+        packImageAsset: 'assets/vita_orum/card_pack_vita_orum.png',
       ),
     ];
 
@@ -187,7 +194,7 @@ class RebirthStoreTab extends StatelessWidget {
 
 /// A single card-pack widget with:
 /// - Name above
-/// - Simple rectangular image "card"
+/// - Pack image
 /// - Left/right arrows to change level (0–10)
 /// - Cost (10^level)
 /// - Buy button (random card from pack)
@@ -269,7 +276,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
       return;
     }
 
-    // 2) Choose a card according to pack-specific logic.
+    // 2) Choose a card using the shared pack distribution.
     final rng = math.Random();
     final drawResult = _drawCardForPack(
       cards: cards,
@@ -450,7 +457,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
             ),
             const SizedBox(height: 12),
 
-            // Arrow + card image
+            // Arrow + pack image
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -461,7 +468,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
                 ),
                 const SizedBox(width: 8),
 
-                // Pack image (still just a pack icon, not the individual card).
+                // Pack image
                 Container(
                   width: 90,
                   height: 140,
@@ -475,7 +482,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: Image.asset(
-                      'assets/lux_aurea/card_pack_lux_aurea.png',
+                      widget.config.packImageAsset,
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
                         return Container(

@@ -10,15 +10,15 @@ import '../cards/game_card_face.dart';
 import '../cards/card_effects.dart';
 
 /// Shared key for player collection in SharedPreferences
+/// MUST match the store tab.
 const String kPlayerCollectionKey = 'player_collection';
 
 /// Manual pack display order used for:
 ///  - Collection sorting (by pack, then rank)
 ///  - Store pack ordering (keep in sync in the store file).
 const List<String> kPackDisplayOrder = [
+  'vita_orum',
   'lux_aurea',
-  'vita_aurum',
-  // Add more pack IDs here in the desired order
 ];
 
 class DeckManagementTab extends StatefulWidget {
@@ -50,7 +50,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   static const String _activeDeckIndexKey = 'rebirth_active_deck_index';
 
   int _deckSlotCount = 1; // starts with 1 deck by default
-  String _selectedViewId = 'deck_1'; // 'deck_1'...'deck_N' or 'collection'
+  String _selectedViewId = 'deck_1';
   bool _loaded = false;
 
   /// Drawer starts CLOSED whenever this tab is opened.
@@ -86,7 +86,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
     final storedActiveDeckIndex = prefs.getInt(_activeDeckIndexKey);
 
-    // Load player collection JSON
+    // ---------- LOAD PLAYER COLLECTION FROM THE SAME PLACE AS STORE ----------
     final rawCollection = prefs.getString(kPlayerCollectionKey);
     List<OwnedCard> collection = [];
     if (rawCollection != null && rawCollection.isNotEmpty) {
@@ -100,7 +100,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       }
     }
 
-    // Load decks JSON
+    // ---------- LOAD DECKS JSON ----------
     final rawDecks = prefs.getString(_decksDataKey);
     List<_DeckData> decks = [];
     if (rawDecks != null && rawDecks.isNotEmpty) {
@@ -114,7 +114,8 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       }
     }
 
-    int slotCount = (storedCount != null && storedCount >= 1) ? storedCount : 1;
+    int slotCount =
+    (storedCount != null && storedCount >= 1) ? storedCount : 1;
 
     // Ensure we have one _DeckData per slot.
     decks = _ensureDeckListForSlotCount(decks, slotCount);
@@ -129,8 +130,8 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       _selectedViewId = storedView != null ? storedView : 'deck_1';
       _collection = collection;
       _decks = decks;
-      _maxCards = storedMaxCards ?? 1;
-      _maxCapacity = storedMaxCapacity ?? 1;
+      _maxCards = 100; // relaxed for now
+      _maxCapacity = 1000; // relaxed for now
       _activeDeckIndexZero = activeIndex;
       _loaded = true;
       // _drawerOpen stays false initially so drawer starts closed.
@@ -178,7 +179,11 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   _DeckData _getOrCreateDeckByIndexZero(int indexZero) {
     while (_decks.length <= indexZero) {
       final id = 'deck_${_decks.length + 1}';
-      _decks.add(_DeckData(id: id, name: 'Deck ${_decks.length + 1}', cardIds: []));
+      _decks.add(_DeckData(
+        id: id,
+        name: 'Deck ${_decks.length + 1}',
+        cardIds: [],
+      ));
     }
     return _decks[indexZero];
   }
@@ -649,7 +654,8 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         bool fromDeck = false,
         int? deckIndexZero,
       }) async {
-    final baseCost = CardEffects.baseCost(rank: card.rank, level: owned.level);
+    final baseCost =
+    CardEffects.baseCost(rank: card.rank, level: owned.level);
     final scalingFactor =
     CardEffects.costScalingFactor(level: owned.level);
 
@@ -968,8 +974,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       children: [
         // Deck name + edit + active selector
         Padding(
-          padding:
-          const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
+          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
           child: Row(
             children: [
               Expanded(
@@ -1008,8 +1013,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
         // Stats row
         Padding(
-          padding:
-          const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
           child: Row(
             children: [
               Text(

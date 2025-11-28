@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'next_run_tab.dart';
-import 'rebirth_store_tab.dart';
+import 'store_tab.dart';
 import 'deck_management_tab.dart';
-import 'pickaxe_upgrades_tab.dart';
+import 'achievements_tab.dart';
 
 /// Main widget for the Rebirth tab.
 /// Shows subtabs: Next Run, Store, Deck, Pickaxe.
@@ -28,7 +28,7 @@ class RebirthScreen extends StatelessWidget {
               Tab(text: 'Next Run'),
               Tab(text: 'Store'),
               Tab(text: 'Deck'),
-              Tab(text: 'Pickaxe'),
+              Tab(text: 'Achievements'),
             ],
           ),
           Expanded(
@@ -43,7 +43,7 @@ class RebirthScreen extends StatelessWidget {
                   currentGold: currentGold,
                   onSpendGold: onSpendGold,
                 ),
-                PickaxeUpgradesTab(
+                AchievementsTab(
                   currentGold: currentGold,
                   onSpendGold: onSpendGold,
                 ),

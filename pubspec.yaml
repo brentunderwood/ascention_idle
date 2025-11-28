@@ -62,8 +62,29 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/
+    - assets/click_screen_art/gold_mining/
     - assets/lux_aurea/
-    - assets/lux_aurea/gold/
+    - assets/lux_aurea/rank_1/
+    - assets/lux_aurea/rank_2/
+    - assets/lux_aurea/rank_3/
+    - assets/lux_aurea/rank_4/
+    - assets/lux_aurea/rank_5/
+    - assets/lux_aurea/rank_6/
+    - assets/lux_aurea/rank_7/
+    - assets/lux_aurea/rank_8/
+    - assets/lux_aurea/rank_9/
+    - assets/lux_aurea/rank_10/
+    - assets/vita_orum/
+    - assets/vita_orum/rank_1/
+    - assets/vita_orum/rank_2/
+    - assets/vita_orum/rank_3/
+    - assets/vita_orum/rank_4/
+    - assets/vita_orum/rank_5/
+    - assets/vita_orum/rank_6/
+    - assets/vita_orum/rank_7/
+    - assets/vita_orum/rank_8/
+    - assets/vita_orum/rank_9/
+    - assets/vita_orum/rank_10/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware
