@@ -1,18 +1,33 @@
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
-import 'game_card_models.dart'; // assumes OwnedCard is defined here
+
+import 'game_card_models.dart';
 import 'card_catalog.dart';
 
 /// SharedPreferences key for the player's card collection.
-const String kPlayerCollectionKey = 'player_collection_v1';
+///
+/// IMPORTANT:
+/// This should match the key used elsewhere in the app
+/// (e.g. DeckManagementTab, Store, etc.).
+const String kPlayerCollectionKey = 'player_collection';
 
 /// Repository for managing the player's card collection.
 ///
 /// - Only one copy of each card ID is stored.
 /// - If a card is obtained again, its experience is increased.
 /// - Data is persisted in SharedPreferences as a JSON map:
-///   { "card_id": { "cardId": "...", "level": ..., "experience": ... }, ... }
+///   {
+///     "card_id": {
+///       "cardId": "...",
+///       "level": ...,
+///       "experience": ...
+///     },
+///     ...
+///   }
+///
+/// For backward compatibility, it also supports an older list-based format:
+///   [ { "cardId": "...", "level": ..., "experience": ... }, ... ]
 class PlayerCollectionRepository {
   PlayerCollectionRepository._internal();
 
@@ -28,13 +43,32 @@ class PlayerCollectionRepository {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString(kPlayerCollectionKey);
 
+    _cardsById.clear();
+
     if (jsonStr != null && jsonStr.isNotEmpty) {
-      final decoded = json.decode(jsonStr) as Map<String, dynamic>;
-      decoded.forEach((cardId, data) {
-        if (data is Map<String, dynamic>) {
-          _cardsById[cardId] = OwnedCard.fromJson(data);
+      try {
+        final decoded = json.decode(jsonStr);
+
+        if (decoded is Map<String, dynamic>) {
+          // Preferred map-based format
+          decoded.forEach((cardId, data) {
+            if (data is Map<String, dynamic>) {
+              _cardsById[cardId] = OwnedCard.fromJson(data);
+            }
+          });
+        } else if (decoded is List) {
+          // Backward compatibility: old list-based format
+          for (final e in decoded) {
+            if (e is Map<String, dynamic>) {
+              final oc = OwnedCard.fromJson(e);
+              _cardsById[oc.cardId] = oc;
+            }
+          }
         }
-      });
+      } catch (_) {
+        // If parsing fails, start with an empty collection.
+        _cardsById.clear();
+      }
     }
 
     _initialized = true;
@@ -94,5 +128,14 @@ class PlayerCollectionRepository {
     await init();
     _cardsById[ownedCard.cardId] = ownedCard;
     await _save();
+  }
+
+  /// Clear in-memory state so it matches a wiped SharedPreferences.
+  ///
+  /// Used by the "Reset all progress" button. We do *not* need to touch
+  /// SharedPreferences here if the caller already cleared it.
+  Future<void> reset() async {
+    _cardsById.clear();
+    _initialized = false;
   }
 }

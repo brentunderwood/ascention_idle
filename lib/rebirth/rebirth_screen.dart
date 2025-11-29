@@ -6,15 +6,19 @@ import 'deck_management_tab.dart';
 import 'achievements_tab.dart';
 
 /// Main widget for the Rebirth tab.
-/// Shows subtabs: Next Run, Store, Deck, Pickaxe.
+/// Shows subtabs: Next Run, Store, Deck, Achievements.
 class RebirthScreen extends StatelessWidget {
   final double currentGold;
   final ValueChanged<double> onSpendGold;
+
+  /// The current global achievement multiplier, coming from the idle game state.
+  final double achievementMultiplier;
 
   const RebirthScreen({
     super.key,
     required this.currentGold,
     required this.onSpendGold,
+    required this.achievementMultiplier,
   });
 
   @override
@@ -38,7 +42,10 @@ class RebirthScreen extends StatelessWidget {
                   currentGold: currentGold,
                   onSpendGold: onSpendGold,
                 ),
-                RebirthStoreTab(currentGold: currentGold, onSpendGold: onSpendGold),
+                RebirthStoreTab(
+                  currentGold: currentGold,
+                  onSpendGold: onSpendGold,
+                ),
                 DeckManagementTab(
                   currentGold: currentGold,
                   onSpendGold: onSpendGold,
@@ -46,6 +53,7 @@ class RebirthScreen extends StatelessWidget {
                 AchievementsTab(
                   currentGold: currentGold,
                   onSpendGold: onSpendGold,
+                  achievementMultiplier: achievementMultiplier,
                 ),
               ],
             ),

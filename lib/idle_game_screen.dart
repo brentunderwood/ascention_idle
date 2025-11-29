@@ -9,6 +9,10 @@ import 'rebirth/rebirth_screen.dart';
 import 'cards/player_collection_repository.dart';
 import 'cards/game_card_models.dart';
 import 'upgrades_screen.dart';
+import 'rebirth/achievements_catalog.dart';
+import 'misc_tab.dart'; // NEW: misc tab split into its own file
+
+part 'idle_game_state.dart';
 
 /// Change this to swap the background later.
 const String kGameBackgroundAsset =
@@ -32,11 +36,36 @@ const String kNextRunSelectedKey = 'next_run_selected_option';
 const String kCardUpgradeCountsKey = 'card_upgrade_counts';
 
 /// Snapshot of which cards (and at what level) are upgradeable this run.
-/// This must match the key in upgrades_screen.dart.
 const String kUpgradeDeckSnapshotKey = 'rebirth_upgrade_deck_snapshot';
 
 /// Tracks manual clicks on the rock.
 const String kManualClickCountKey = 'manual_click_count';
+
+/// Frenzy spell persistence keys.
+const String kSpellFrenzyActiveKey = 'spell_frenzy_active';
+const String kSpellFrenzyLastTriggerKey = 'spell_frenzy_last_trigger';
+const String kSpellFrenzyDurationKey = 'spell_frenzy_duration_seconds';
+const String kSpellFrenzyCooldownKey = 'spell_frenzy_cooldown_seconds';
+const String kSpellFrenzyMultiplierKey = 'spell_frenzy_multiplier';
+
+/// Momentum persistence keys.
+const String kMomentumCapKey = 'momentum_cap';
+const String kMomentumScaleKey = 'momentum_scale';
+
+/// Bonus ore persistence keys.
+const String kBonusOrePerSecondKey = 'bonus_ore_per_second';
+const String kBonusOrePerClickKey = 'bonus_ore_per_click';
+
+/// Multiplier persistence keys.
+const String kRebirthMultiplierKey = 'rebirth_multiplier';
+const String kOverallMultiplierKey = 'overall_multiplier';
+const String kMaxGoldMultiplierKey = 'max_gold_multiplier';
+const String kAchievementMultiplierKey = 'achievement_multiplier';
+
+/// Random nugget spawn persistence keys.
+const String kRandomSpawnChanceKey = 'random_spawn_chance';
+const String kBonusRebirthGoldFromNuggetsKey =
+    'bonus_rebirth_gold_from_nuggets';
 
 /// Simple nav item model so you can easily swap icons / labels later.
 class _NavItem {
@@ -65,448 +94,67 @@ class IdleGameScreen extends StatefulWidget {
   State<IdleGameScreen> createState() => _IdleGameScreenState();
 }
 
-/// Main game state for the idle game.
-///
-/// Implements [IdleGameEffectTarget] so card effects can modify the
-/// current run's values (ore, orePerSecond, etc.) in a controlled way.
-class _IdleGameScreenState extends State<IdleGameScreen>
-    implements IdleGameEffectTarget {
-  int _currentTabIndex = 0;
+/// =======================
+/// UI HELPERS (WIDGETS)
+/// =======================
 
-  double _goldOre = 0;
-  double _totalGoldOre = 0;
-  double _gold = 0.0;
-  double _orePerSecond = 0;
-  double _bonusOrePerSecond = 1;
-
-  /// Flat bonus added to the base 1.0 ore per click.
-  double _baseOrePerClick = 0.0;
-
-  int _rebirthCount = 0;
-  double _totalRefinedGold = 0;
-
-  /// Which goal applies to the *current* run
-  /// (e.g., 'mine_gold' or 'create_antimatter').
-  String _rebirthGoal = 'mine_gold';
-
-  /// Momentum system for clicks (kept for future use).
-  int _momentumClicks = 0;
-  DateTime? _lastClickTime;
-
-  /// Cached value for previewing how much will be gained on the next click.
-  double _lastComputedOrePerClick = 1.0;
-
-  /// Manual clicks on the rock (persisted, reset on rebirth).
-  int _manualClickCount = 0;
-
-  /// Animation state for the rock (3D-ish tilt).
-  double _rockScale = 1.0;
-  double _rockTiltX = 0.0; // tilt forward/back (based on vertical tap)
-  double _rockTiltY = 0.0; // tilt left/right (based on horizontal tap)
-
-  /// Small positional offset so the rock can "drag" a bit under the finger.
-  double _rockOffsetX = 0.0;
-  double _rockOffsetY = 0.0;
-
-  /// Where the initial press happened within the rock, used to compute drag delta.
-  Offset? _rockPressLocalPosition;
-
-  Timer? _timer;
-  SharedPreferences? _prefs;
-  DateTime? _lastActiveTime;
-
-  @override
-  void initState() {
-    super.initState();
-    _initAndStart();
-  }
-
-  Future<void> _initAndStart() async {
-    await PlayerCollectionRepository.instance.init();
-    await _loadProgress();
-    await _applyOfflineProgress();
-    _updatePreviewPerClick();
-    _startTimer();
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    // Save one last time (fire-and-forget)
-    _saveProgress();
-    super.dispose();
-  }
-
-  Future<void> _loadProgress() async {
-    _prefs ??= await SharedPreferences.getInstance();
-
-    final storedGoldOre = _prefs!.getDouble(kGoldOreKey);
-    final storedTotalGoldOre = _prefs!.getDouble(kTotalGoldOreKey);
-    final storedGold = _prefs!.getDouble(kGoldKey);
-    final storedOrePerSecond = _prefs!.getDouble(kOrePerSecondKey);
-    final storedBaseOrePerClick = _prefs!.getDouble(kBaseOrePerClickKey);
-    final storedLastActive = _prefs!.getInt(kLastActiveKey);
-    final storedRebirthCount = _prefs!.getInt(kRebirthCountKey);
-    final storedTotalRefinedGold = _prefs!.getDouble(kTotalRefinedGoldKey);
-    final storedRebirthGoal = _prefs!.getString(kRebirthGoalKey);
-    final storedManualClicks = _prefs!.getInt(kManualClickCountKey);
-
-    setState(() {
-      _goldOre = storedGoldOre ?? 0;
-      _totalGoldOre = storedTotalGoldOre ?? 0;
-      _gold = storedGold ?? 0;
-      _orePerSecond = storedOrePerSecond ?? 0;
-      _baseOrePerClick = storedBaseOrePerClick ?? 1;
-      _rebirthCount = storedRebirthCount ?? 0;
-      _totalRefinedGold = storedTotalRefinedGold ?? 0;
-      _rebirthGoal = storedRebirthGoal ?? 'mine_gold';
-      _manualClickCount = storedManualClicks ?? 0;
-      _lastActiveTime = storedLastActive != null
-          ? DateTime.fromMillisecondsSinceEpoch(storedLastActive)
-          : null;
-    });
-  }
-
-  Future<void> _saveProgress() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    _lastActiveTime = DateTime.now();
-
-    await _prefs!.setDouble(kGoldOreKey, _goldOre);
-    await _prefs!.setDouble(kTotalGoldOreKey, _totalGoldOre);
-    await _prefs!.setDouble(kGoldKey, _gold);
-    await _prefs!.setDouble(kOrePerSecondKey, _orePerSecond);
-    await _prefs!.setDouble(kBaseOrePerClickKey, _baseOrePerClick);
-    await _prefs!.setInt(kRebirthCountKey, _rebirthCount);
-    await _prefs!.setDouble(kTotalRefinedGoldKey, _totalRefinedGold);
-    await _prefs!.setString(kRebirthGoalKey, _rebirthGoal);
-    await _prefs!.setInt(kManualClickCountKey, _manualClickCount);
-    await _prefs!
-        .setInt(kLastActiveKey, _lastActiveTime!.millisecondsSinceEpoch);
-  }
-
-  void _startTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      final now = DateTime.now();
-
-      bool momentumChanged = false;
-      if (_lastClickTime != null &&
-          now.difference(_lastClickTime!) > const Duration(seconds: 10) &&
-          _momentumClicks != 0) {
-        setState(() {
-          _momentumClicks = 0;
-        });
-        momentumChanged = true;
-      }
-
-      setState(() {
-        _goldOre += _orePerSecond;
-        _totalGoldOre += _orePerSecond * _bonusOrePerSecond;
-      });
-
-      if (momentumChanged) {
-        _updatePreviewPerClick();
-      }
-
-      _saveProgress();
-    });
-  }
-
-  Future<void> _applyOfflineProgress() async {
-    if (_lastActiveTime == null || _orePerSecond <= 0) {
-      // Nothing to do, just update last active.
-      await _saveProgress();
-      return;
-    }
-
-    final now = DateTime.now();
-    final diff = now.difference(_lastActiveTime!);
-    final seconds = diff.inSeconds;
-
-    // Ignore very short gaps (e.g., app switch for a second)
-    if (seconds <= 60) {
-      await _saveProgress();
-      return;
-    }
-
-    final earned = seconds * _orePerSecond * _bonusOrePerSecond;
-
-    setState(() {
-      _goldOre += earned;
-      _totalGoldOre += earned;
-    });
-
-    await _saveProgress();
-
-    final durationText = _formatDuration(diff);
-
-    final message = 'While you were away for $durationText,\n'
-        'your miners produced ${earned.toStringAsFixed(0)} gold ore!';
-
-    // Show the alert *after* first frame to avoid context issues in initState.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      alert_user(
-        context,
-        message,
-        title: 'Offline Progress',
-      );
-    });
-  }
-
-  String _formatDuration(Duration d) {
-    if (d.inHours >= 1) {
-      final hours = d.inHours;
-      final minutes = d.inMinutes % 60;
-      if (minutes > 0) {
-        return '${hours}h ${minutes}m';
-      }
-      return '${hours}h';
-    } else if (d.inMinutes >= 1) {
-      final minutes = d.inMinutes;
-      final seconds = d.inSeconds % 60;
-      if (seconds > 0) {
-        return '${minutes}m ${seconds}s';
-      }
-      return '${minutes}m';
-    } else {
-      return '${d.inSeconds}s';
-    }
-  }
-
-  double _calculateRebirthGold() {
-    if (_totalGoldOre <= 0) return 0;
-
-    // level = floor(log_100(total_gold_ore))
-    double levelRaw = math.log(_totalGoldOre) / math.log(100);
-    levelRaw *= levelRaw;
-
-
-    double manualClick;
-    if(_manualClickCount == 0){
-      manualClick = 0;
-    }else{
-      manualClick = math.log(_manualClickCount) / math.log(10) - 1;
-      manualClick = math.max(manualClick.floor(), 0).toDouble();
-    }
-
-    return levelRaw.floorToDouble() + manualClick;
-  }
-
-  Future<void> _clearCardUpgradeCounts() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!.remove(kCardUpgradeCountsKey);
-  }
-
-  Future<void> _clearUpgradeDeckSnapshot() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!.remove(kUpgradeDeckSnapshotKey);
-  }
-
-  Future<void> _attemptRebirth() async {
-    final rebirthGold = _calculateRebirthGold();
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Confirm Rebirth'),
-        content: Text(
-          'Rebirth will reset your gold ore, total gold ore, and ore per second '
-              'back to 0, and grant you ${rebirthGold.toStringAsFixed(0)} refined gold.\n\n'
-              'Do you want to continue?',
+Widget buildIdleGameScaffold(
+    _IdleGameScreenState state,
+    BuildContext context,
+    ) {
+  return Scaffold(
+    // Transparent so background image shows fully.
+    backgroundColor: Colors.transparent,
+    body: Container(
+      decoration: const BoxDecoration(
+        image: DecorationImage(
+          image: AssetImage(kGameBackgroundAsset),
+          fit: BoxFit.cover,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Rebirth'),
-          ),
-        ],
       ),
-    );
-
-    if (confirm != true) return;
-
-    // Determine which Next Run option is currently selected
-    _prefs ??= await SharedPreferences.getInstance();
-    final selectedGoal =
-        _prefs!.getString(kNextRunSelectedKey) ?? 'mine_gold';
-
-    setState(() {
-      // Update the rebirth goal for this run
-      _rebirthGoal = selectedGoal;
-
-      // Award gold + total refined gold
-      _gold += rebirthGold;
-      _totalRefinedGold += rebirthGold;
-
-      // Increment rebirth count only if reward > 0
-      if (rebirthGold > 0) {
-        _rebirthCount += 1;
-      }
-
-      // Reset ore values
-      _goldOre = 0;
-      _totalGoldOre = 0;
-      _orePerSecond = 0;
-      _bonusOrePerSecond = 1;
-
-      // Reset click-related stats for the new run
-      _baseOrePerClick = 0.0;
-      _lastComputedOrePerClick = 1.0;
-
-      // Reset momentum for the new run
-      _momentumClicks = 0;
-      _lastClickTime = null;
-
-      // Reset manual click count for the new run
-      _manualClickCount = 0;
-    });
-
-    // Clear per-run card upgrades and the frozen upgrade deck snapshot
-    // so the next run's upgrade pool is rebuilt from the active deck.
-    await _clearCardUpgradeCounts();
-    await _clearUpgradeDeckSnapshot();
-
-    await _saveProgress();
-    _updatePreviewPerClick();
-
-    final runGoalText =
-    _rebirthGoal == 'mine_gold' ? 'Mine gold' : _rebirthGoal;
-
-    await alert_user(
-      context,
-      'You rebirthed and gained ${rebirthGold.toStringAsFixed(0)} refined gold!\n'
-          'Total rebirths: $_rebirthCount\n'
-          'Total refined gold: ${_totalRefinedGold.toStringAsFixed(0)}\n'
-          'Run goal: $runGoalText',
-      title: 'Rebirth Complete',
-    );
-  }
-
-  /// For now: click value is base 1 per click + any per-click bonuses.
-  void _updatePreviewPerClick() {
-    setState(() {
-      _lastComputedOrePerClick = 1.0 + _baseOrePerClick;
-    });
-  }
-
-  /// Called when an upgrade is purchased in the Upgrades tab.
-  ///
-  /// [cardLevel] is the player's level for this card.
-  /// [upgradesThisRun] is how many times this card has been upgraded
-  /// so far in the *current* run (after this purchase).
-  void _applyCardUpgradeEffect(
-      GameCard card,
-      int cardLevel,
-      int upgradesThisRun,
-      ) {
-    setState(() {
-      card.cardEffect?.call(this, cardLevel, upgradesThisRun);
-    });
-    _saveProgress();
-  }
-
-  /// Implementation of IdleGameEffectTarget: applies an ore/s delta.
-  @override
-  void addOrePerSecond(double amount) {
-    _orePerSecond += amount;
-  }
-
-  /// Implementation of IdleGameEffectTarget: applies an instant ore gain.
-  @override
-  void addOre(double amount) {
-    _goldOre += amount;
-    _totalGoldOre += amount;
-  }
-
-  /// Implementation of IdleGameEffectTarget: modifies base ore per click.
-  @override
-  void addBaseOrePerClick(double amount) {
-    _baseOrePerClick += amount;
-    _updatePreviewPerClick();
-  }
-
-  /// Compute click phase for a given manual click count.
-  ///
-  /// log_clicks = ceil(log10(manualClicks)), with a minimum of 2
-  /// phase = floor(manualClicks * 10 / 10^log_clicks)
-  /// Clamped to [0, 9] so we always have a valid rock_0x.png.
-  int _computeClickPhase(int manualClicks) {
-    if (manualClicks <= 0) return 1;
-
-    final double rawLog = math.log(manualClicks) / math.log(10);
-    int logClicks = rawLog.ceil();
-    if (logClicks < 2) logClicks = 2;
-
-    final double denom = math.pow(10, logClicks).toDouble();
-    final double value = manualClicks * 10 / denom;
-
-    int phase = value.floor();
-    if (phase <= 0) phase = 1;
-    if (phase > 9) phase = 9;
-    return phase;
-  }
-
-  /// Convenience wrapper that uses the current stored _manualClickCount.
-  int _currentClickPhase() => _computeClickPhase(_manualClickCount);
-
-  /// Top bar switches between Ore stats and Refined Gold
-  /// depending on which main tab is selected.
-  Widget _buildTopBar() {
-    if (_currentTabIndex == 2) {
-      // Rebirth tab: show refined gold instead of ore stats.
-      return Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 16.0,
-          vertical: 12.0,
-        ),
+      child: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              'Refined Gold: ${_gold.toStringAsFixed(0)}',
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Colors.amber,
-                shadows: [
-                  Shadow(
-                    blurRadius: 6,
-                    color: Colors.black,
-                    offset: Offset(2, 2),
-                  ),
-                ],
+            buildTopBar(state),
+            const SizedBox(height: 8),
+            // Main tab content area fills everything down to bottom nav bar.
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: buildTabContent(state),
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Total Refined Gold: ${_totalRefinedGold.toStringAsFixed(0)}',
-              style: const TextStyle(
-                fontSize: 16,
-                color: Colors.white,
-                shadows: [
-                  Shadow(
-                    blurRadius: 4,
-                    color: Colors.black54,
-                    offset: Offset(1, 1),
-                  ),
-                ],
-              ),
-              textAlign: TextAlign.center,
             ),
           ],
         ),
-      );
-    }
+      ),
+    ),
 
-    // Default: ore/antimatter status for all other tabs
-    final resourceLabel =
-    _rebirthGoal == 'create_antimatter' ? 'Antimatter' : 'Gold Ore';
+    // Bottom tab navigation
+    bottomNavigationBar: BottomNavigationBar(
+      currentIndex: state._currentTabIndex,
+      type: BottomNavigationBarType.fixed,
+      onTap: (index) {
+        state.setState(() {
+          state._currentTabIndex = index;
+        });
+      },
+      items: _navItems
+          .map(
+            (item) => BottomNavigationBarItem(
+          icon: Icon(item.icon),
+          label: item.label,
+        ),
+      )
+          .toList(),
+    ),
+  );
+}
 
+/// Top bar switches between Ore stats and Refined Gold
+/// depending on which main tab is selected.
+Widget buildTopBar(_IdleGameScreenState state) {
+  if (state._currentTabIndex == 2) {
+    // Rebirth tab: show refined gold instead of ore stats.
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: 16.0,
@@ -516,11 +164,11 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            '$resourceLabel: ${_goldOre.toStringAsFixed(0)}',
+            'Refined Gold: ${state._gold.toStringAsFixed(0)}',
             style: const TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: Colors.amber,
               shadows: [
                 Shadow(
                   blurRadius: 6,
@@ -533,7 +181,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
           ),
           const SizedBox(height: 4),
           Text(
-            'Ore per second: ${_orePerSecond.toStringAsFixed(2)}',
+            'Total Refined Gold: ${state._totalRefinedGold.toStringAsFixed(0)}',
             style: const TextStyle(
               fontSize: 16,
               color: Colors.white,
@@ -552,388 +200,402 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     );
   }
 
-  // ====== ROCK INTERACTION LOGIC ======
+  // Default: ore/antimatter status for all other tabs
+  final resourceLabel =
+  state._rebirthGoal == 'create_antimatter' ? 'Antimatter' : 'Gold Ore';
+  final orePerClickDisplay = state._currentOrePerClickForDisplay();
 
-  /// Handle the *start* of a press/drag on the rock.
-  /// Awards ore once and sets the initial tilt based on touch position.
-  void _onRockPanDown(DragDownDetails details) {
-    _handleRockPress(details.localPosition);
-  }
+  // Show effective ore per second, including Frenzy + overall multiplier.
+  final bool frenzyNow = state._isFrenzyCurrentlyActive();
+  final double baseOrePerSecond =
+      state._orePerSecond + state._bonusOrePerSecond;
+  final double effectiveOrePerSecond = baseOrePerSecond *
+      (frenzyNow ? state._spellFrenzyMultiplier : 1.0) *
+      state._overallMultiplier;
 
-  /// While dragging, update tilt and small positional offset to follow the finger.
-  void _onRockPanUpdate(DragUpdateDetails details) {
-    _updateRockTiltAndOffset(details.localPosition);
-  }
-
-  /// On release, rebound rock to normal.
-  void _onRockPanEnd(DragEndDetails details) {
-    _resetRockTransform();
-  }
-
-  /// Also rebound if the gesture is cancelled.
-  void _onRockPanCancel() {
-    _resetRockTransform();
-  }
-
-  void _handleRockPress(Offset localPosition) {
-    // Remember where the press started for drag calculations.
-    _rockPressLocalPosition = localPosition;
-
-    // Momentum handling (future use)
-    final now = DateTime.now();
-    if (_lastClickTime == null ||
-        now.difference(_lastClickTime!) > const Duration(seconds: 10)) {
-      _momentumClicks = 0;
-    }
-    _momentumClicks += 1;
-    _lastClickTime = now;
-
-    const double rockSize = 440.0;
-    final double tapX = localPosition.dx.clamp(0.0, rockSize);
-    final double tapY = localPosition.dy.clamp(0.0, rockSize);
-    final double center = rockSize / 2;
-
-    // Normalize to [-1, 1], where 0 is center.
-    final double normX = (tapX - center) / center; // left -1, right +1
-    final double normY = (tapY - center) / center; // top -1, bottom +1
-
-    // Max tilt angle for a "pressed in" feel.
-    const double maxTilt = 4 * math.pi / 18;
-
-    // We want the rock to tilt *toward* the press.
-    final double tiltX = normY * maxTilt;
-    final double tiltY = -normX * maxTilt;
-
-    // Compute phase for this click using the *new* click index.
-    final int clicksAfterThis = _manualClickCount + 1;
-    final int phase = _computeClickPhase(clicksAfterThis);
-    final double multiplier = phase == 9 ? 10.0 : 1.0;
-
-    final double orePerClick = (1.0 + _baseOrePerClick) * multiplier;
-
-    setState(() {
-      // Animate: shrink + 3D tilt toward tap point.
-      _rockScale = 0.9;
-      _rockTiltX = tiltX;
-      _rockTiltY = tiltY;
-
-      // No drag offset yet; only applied once the finger moves.
-      _rockOffsetX = 0.0;
-      _rockOffsetY = 0.0;
-
-      // Game logic.
-      _goldOre += orePerClick;
-      _totalGoldOre += orePerClick;
-      _lastComputedOrePerClick = orePerClick;
-      _manualClickCount = clicksAfterThis;
-    });
-
-    _saveProgress();
-  }
-
-  void _updateRockTiltAndOffset(Offset localPosition) {
-    // If for some reason we missed the press, just tilt without offset.
-    if (_rockPressLocalPosition == null) {
-      const double rockSize = 440.0;
-      final double tapX = localPosition.dx.clamp(0.0, rockSize);
-      final double tapY = localPosition.dy.clamp(0.0, rockSize);
-      final double center = rockSize / 2;
-
-      final double normX = (tapX - center) / center;
-      final double normY = (tapY - center) / center;
-
-      const double maxTilt = 4 * math.pi / 18;
-
-      setState(() {
-        _rockScale = 0.9;
-        _rockTiltX = normY * maxTilt;
-        _rockTiltY = -normX * maxTilt;
-        _rockOffsetX = 0.0;
-        _rockOffsetY = 0.0;
-      });
-      return;
-    }
-
-    // Tilt based on where inside the rock the finger currently is.
-    const double rockSize = 440.0;
-    final double tapX = localPosition.dx.clamp(0.0, rockSize);
-    final double tapY = localPosition.dy.clamp(0.0, rockSize);
-    final double center = rockSize / 2;
-
-    final double normX = (tapX - center) / center; // -1 to 1
-    final double normY = (tapY - center) / center; // -1 to 1
-
-    const double maxTilt = 4 * math.pi / 18;
-
-    final double tiltX = normY * maxTilt;
-    final double tiltY = -normX * maxTilt;
-
-    // Drag offset: 20% of the cursor movement from the press point.
-    const double dragFactor = 0.2;
-    const double maxOffset = 200.0; // keep it small
-
-    final Offset delta = localPosition - _rockPressLocalPosition!;
-    double offsetX = delta.dx * dragFactor;
-    double offsetY = delta.dy * dragFactor;
-
-    // Clamp to a small radius so it doesn't fly away.
-    offsetX = offsetX.clamp(-maxOffset, maxOffset);
-    offsetY = offsetY.clamp(-maxOffset, maxOffset);
-
-    setState(() {
-      _rockScale = 0.9;
-      _rockTiltX = tiltX;
-      _rockTiltY = tiltY;
-      _rockOffsetX = offsetX;
-      _rockOffsetY = offsetY;
-    });
-  }
-
-  void _resetRockTransform() {
-    if (!mounted) return;
-    setState(() {
-      _rockScale = 1.0;
-      _rockTiltX = 0.0;
-      _rockTiltY = 0.0;
-      _rockOffsetX = 0.0;
-      _rockOffsetY = 0.0;
-      _rockPressLocalPosition = null;
-    });
-  }
-
-  // ====== END ROCK INTERACTION LOGIC ======
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      // Transparent so background image shows fully.
-      backgroundColor: Colors.transparent,
-      body: Container(
-        decoration: BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage(kGameBackgroundAsset),
-            fit: BoxFit.cover,
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              _buildTopBar(),
-              const SizedBox(height: 8),
-              // Main tab content area fills everything down to bottom nav bar.
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: _buildTabContent(),
-                ),
+  return Padding(
+    padding: const EdgeInsets.symmetric(
+      horizontal: 16.0,
+      vertical: 12.0,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(
+          '$resourceLabel: ${state._goldOre.toStringAsFixed(0)}',
+          style: const TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            shadows: [
+              Shadow(
+                blurRadius: 6,
+                color: Colors.black,
+                offset: Offset(2, 2),
               ),
             ],
           ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Ore per second: ${effectiveOrePerSecond.toStringAsFixed(2)}',
+          style: const TextStyle(
+            fontSize: 16,
+            color: Colors.white,
+            shadows: [
+              Shadow(
+                blurRadius: 4,
+                color: Colors.black54,
+                offset: Offset(1, 1),
+              ),
+            ],
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Ore per click: ${orePerClickDisplay.toStringAsFixed(2)}',
+          style: const TextStyle(
+            fontSize: 16,
+            color: Colors.white,
+            shadows: [
+              Shadow(
+                blurRadius: 4,
+                color: Colors.black54,
+                offset: Offset(1, 1),
+              ),
+            ],
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    ),
+  );
+}
+
+/// Build the Frenzy button (or nothing if the spell isn't unlocked).
+Widget buildFrenzyButton(_IdleGameScreenState state) {
+  if (!state._spellFrenzyActive) {
+    return const SizedBox.shrink();
+  }
+
+  final now = DateTime.now();
+  final bool frenzyActiveNow = state._isFrenzyCurrentlyActive();
+  String label;
+  VoidCallback? onPressed;
+
+  if (state._spellFrenzyLastTriggerTime == null) {
+    // Never cast before: available immediately.
+    label = 'Cast Frenzy';
+    onPressed = state._activateFrenzy;
+  } else {
+    final double elapsedSeconds =
+    now.difference(state._spellFrenzyLastTriggerTime!).inSeconds.toDouble();
+
+    if (frenzyActiveNow) {
+      final remaining = state._spellFrenzyDurationSeconds - elapsedSeconds;
+      final int secs = remaining > 0 ? remaining.ceil() : 0;
+      label = 'Frenzy active: ${secs}s left';
+      onPressed = null;
+    } else {
+      final double remainingCooldown =
+          state._spellFrenzyCooldownSeconds - elapsedSeconds;
+      if (remainingCooldown <= 0) {
+        label = 'Cast Frenzy';
+        onPressed = state._activateFrenzy;
+      } else {
+        final int secs = remainingCooldown.ceil();
+        label = 'Frenzy cooldown: ${secs}s';
+        onPressed = null;
+      }
+    }
+  }
+
+  return Padding(
+    padding: const EdgeInsets.only(top: 12.0),
+    child: SizedBox(
+      width: 260,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
         ),
       ),
+    ),
+  );
+}
 
-      // Bottom tab navigation
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentTabIndex,
-        type: BottomNavigationBarType.fixed,
-        onTap: (index) {
-          setState(() {
-            _currentTabIndex = index;
-          });
-        },
-        items: _navItems
-            .map(
-              (item) => BottomNavigationBarItem(
-            icon: Icon(item.icon),
-            label: item.label,
+/// Nugget widget – small rotating clickable image.
+Widget buildNuggetWidget(
+    _IdleGameScreenState state, {
+      required int nuggetId,
+    }) {
+  final nugget = state._nuggets.firstWhere((n) => n.id == nuggetId);
+
+  final now = DateTime.now();
+  final age = now.difference(nugget.spawnTime).inMilliseconds;
+
+  const int totalMs = 10000; // 10 seconds
+  const int fadeMs = 3000; // 3 sec fade in, 3 sec fade out
+
+  double opacity;
+
+  if (age < fadeMs) {
+    // ✔ FADE IN: 0 → 1 over 3 seconds
+    opacity = age / fadeMs;
+  } else if (age > totalMs - fadeMs) {
+    // ✔ FADE OUT: 1 → 0 over last 3 seconds
+    final remaining = totalMs - age;
+    opacity = remaining / fadeMs;
+  } else {
+    // Fully visible during middle 4 seconds
+    opacity = 1.0;
+  }
+
+  // Clamp just in case
+  opacity = opacity.clamp(0.0, 1.0);
+
+  return Opacity(
+    opacity: opacity,
+    child: GestureDetector(
+      onTap: () => state._onNuggetTap(nuggetId),
+      child: SizedBox(
+        width: 64,
+        height: 64,
+        child: AnimatedBuilder(
+          animation: state._nuggetRotationController,
+          builder: (context, child) {
+            final t = state._nuggetRotationController.value;
+            final angle = (t - 0.5) * 0.4; // swing -0.2 ↔ 0.2
+            return Transform.rotate(
+              angle: angle,
+              child: child,
+            );
+          },
+          child: Image.asset(
+            'assets/click_screen_art/gold_mining/rock_09.png',
+            fit: BoxFit.contain,
           ),
-        )
-            .toList(),
+        ),
       ),
-    );
+    ),
+  );
+}
+
+/// Returns the widget for the currently selected tab.
+Widget buildTabContent(_IdleGameScreenState state) {
+  switch (state._currentTabIndex) {
+    case 0:
+      return buildMainTab(state);
+    case 1:
+      return buildUpgradesTab(state);
+    case 2:
+      return buildRebirthTab(state);
+    case 3:
+      return buildStatsTab();
+    case 4:
+    // NEW: real misc tab widget with reset support
+      return buildMiscTab(state);
+    default:
+      return const SizedBox.shrink();
   }
+}
 
-  /// Returns the widget for the currently selected tab.
-  Widget _buildTabContent() {
-    switch (_currentTabIndex) {
-      case 0:
-        return _buildMainTab();
-      case 1:
-        return _buildUpgradesTab();
-      case 2:
-        return _buildRebirthTab();
-      case 3:
-        return _buildStatsTab();
-      case 4:
-        return _buildMiscTab();
-      default:
-        return const SizedBox.shrink();
-    }
-  }
+Widget buildMainTab(_IdleGameScreenState state) {
+  final rebirthGold = state._calculateRebirthGold();
 
-  Widget _buildMainTab() {
-    final rebirthGold = _calculateRebirthGold();
+  final int phase = state._currentClickPhase();
 
-    final buttonLabelBase =
-    _rebirthGoal == 'create_antimatter' ? 'Create Antimatter' : 'Mine Gold Ore';
+  // Image changes with phase: rock_0x.png where x is the phase (1–9).
+  final String rockAssetPath =
+      'assets/click_screen_art/gold_mining/rock_0$phase.png';
 
-    final preview = _lastComputedOrePerClick;
+  // Optional phase-9 banner text above the rock.
+  final Widget phaseBanner = phase == 9
+      ? const Padding(
+    padding: EdgeInsets.only(bottom: 8.0),
+    child: Text(
+      'Gold Vein Found! All clicks have 10x power',
+      style: TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
+        color: Colors.amber,
+        shadows: [
+          Shadow(
+            blurRadius: 4,
+            color: Colors.black54,
+            offset: Offset(1, 1),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
+    ),
+  )
+      : const SizedBox.shrink();
 
-    final int phase = _currentClickPhase();
-    final String buttonLabel;
-    if (phase == 9) {
-      buttonLabel = 'Gold Vein Found! All clicks have 10x power';
-    } else {
-      buttonLabel = '$buttonLabelBase (+${preview.toStringAsFixed(0)})';
-    }
+  // Column fills the available height in the main tab.
+  // Content at top, rebirth button pinned to bottom (above nav bar).
+  return Column(
+    children: [
+      // Main content area (includes rock and random nuggets).
+      Expanded(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Update play area size for spawn positioning.
+            state._playAreaSize = constraints.biggest;
 
-    // Image changes with phase: rock_0x.png where x is the phase (0–9).
-    final String rockAssetPath =
-        'assets/click_screen_art/gold_mining/rock_0$phase.png';
-
-    // Column fills the available height in the main tab.
-    // Content at top, rebirth button pinned to bottom (above nav bar).
-    return Column(
-      children: [
-        // Main content area
-        Expanded(
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+            return Stack(
               children: [
-                SizedBox(
-                  width: 440,
-                  height: 440,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onPanDown: _onRockPanDown,
-                    onPanUpdate: _onRockPanUpdate,
-                    onPanEnd: _onRockPanEnd,
-                    onPanCancel: _onRockPanCancel,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 80),
-                      curve: Curves.easeOut,
-                      transformAlignment: Alignment.center,
-                      transform: Matrix4.identity()
-                        ..setEntry(3, 2, 0.0015) // perspective for foreshortening
-                        ..translate(_rockOffsetX, _rockOffsetY)
-                        ..scale(_rockScale)
-                        ..rotateX(_rockTiltX)
-                        ..rotateY(_rockTiltY),
-                      child: Image.asset(
-                        rockAssetPath,
-                        fit: BoxFit.contain,
+                Align(
+                  // Move the click object slightly higher on the screen.
+                  alignment: const Alignment(0, -0.2),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      phaseBanner,
+                      SizedBox(
+                        width: 440,
+                        height: 440,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanDown: state._onRockPanDown,
+                          onPanUpdate: state._onRockPanUpdate,
+                          onPanEnd: state._onRockPanEnd,
+                          onPanCancel: state._onRockPanCancel,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 80),
+                            curve: Curves.easeOut,
+                            transformAlignment: Alignment.center,
+                            transform: Matrix4.identity()
+                              ..setEntry(3, 2, 0.0015) // perspective
+                              ..translate(
+                                  state._rockOffsetX, state._rockOffsetY)
+                              ..scale(state._rockScale)
+                              ..rotateX(state._rockTiltX)
+                              ..rotateY(state._rockTiltY),
+                            child: Image.asset(
+                              rockAssetPath,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
                       ),
+                      // New Frenzy button below the click object.
+                      buildFrenzyButton(state),
+                    ],
+                  ),
+                ),
+
+                // Multiple random gold nuggets, each positioned absolutely
+                // so they can cover the whole play area without going off-screen.
+                ...state._nuggets.map(
+                      (n) => Positioned(
+                    left: n.position.dx,
+                    top: n.position.dy,
+                    child: buildNuggetWidget(
+                      state,
+                      nuggetId: n.id,
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  buttonLabel,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    color: Colors.white,
-                    shadows: [
-                      Shadow(
-                        blurRadius: 4,
-                        color: Colors.black54,
-                        offset: Offset(1, 1),
-                      ),
-                    ],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
               ],
+            );
+          },
+        ),
+      ),
+
+      // Rebirth button at bottom of Main tab only
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: state._attemptRebirth,
+            child: Text(
+              'Rebirth and gain ${rebirthGold.toStringAsFixed(0)} gold',
             ),
           ),
         ),
+      ),
+    ],
+  );
+}
 
-        // Rebirth button at bottom of Main tab only
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _attemptRebirth,
-              child: Text(
-                'Rebirth and gain ${rebirthGold.toStringAsFixed(0)} gold',
-              ),
-            ),
+Widget buildUpgradesTab(_IdleGameScreenState state) {
+  final resourceLabel =
+  state._rebirthGoal == 'create_antimatter' ? 'Antimatter' : 'Gold Ore';
+
+  return UpgradesScreen(
+    currentResource: state._goldOre,
+    resourceLabel: resourceLabel,
+    onSpendResource: (amount) {
+      state.setState(() {
+        state._goldOre -= amount;
+        if (state._goldOre < 0) state._goldOre = 0;
+      });
+      state._saveProgress();
+    },
+    onCardUpgradeEffect: state._applyCardUpgradeEffect,
+  );
+}
+
+Widget buildRebirthTab(_IdleGameScreenState state) {
+  // Rebirth tab with its own nested tabs (Next Run / Store / Deck / Achievements).
+  return RebirthScreen(
+    currentGold: state._gold,
+    onSpendGold: (amount) {
+      state.setState(() {
+        state._gold -= amount;
+        if (state._gold < 0) state._gold = 0;
+      });
+      state._saveProgress();
+    },
+    achievementMultiplier: state.getAchievementMultiplier(),
+  );
+}
+
+Widget buildStatsTab() {
+  return const Center(
+    child: Text(
+      'Stats coming soon...',
+      style: TextStyle(
+        fontSize: 18,
+        color: Colors.white,
+        shadows: [
+          Shadow(
+            blurRadius: 4,
+            color: Colors.black54,
+            offset: Offset(1, 1),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUpgradesTab() {
-    final resourceLabel =
-    _rebirthGoal == 'create_antimatter' ? 'Antimatter' : 'Gold Ore';
-
-    return UpgradesScreen(
-      currentResource: _goldOre,
-      resourceLabel: resourceLabel,
-      onSpendResource: (amount) {
-        setState(() {
-          _goldOre -= amount;
-          if (_goldOre < 0) _goldOre = 0;
-        });
-        _saveProgress();
-      },
-      onCardUpgradeEffect: _applyCardUpgradeEffect,
-    );
-  }
-
-  Widget _buildRebirthTab() {
-    // Rebirth tab with its own nested tabs (Next Run / Store / Deck / Achievements).
-    return RebirthScreen(
-      currentGold: _gold,
-      onSpendGold: (amount) {
-        setState(() {
-          _gold -= amount;
-          if (_gold < 0) _gold = 0;
-        });
-        _saveProgress();
-      },
-    );
-  }
-
-  Widget _buildStatsTab() {
-    return const Center(
-      child: Text(
-        'Stats coming soon...',
-        style: TextStyle(
-          fontSize: 18,
-          color: Colors.white,
-          shadows: [
-            Shadow(
-              blurRadius: 4,
-              color: Colors.black54,
-              offset: Offset(1, 1),
-            ),
-          ],
-        ),
-        textAlign: TextAlign.center,
+        ],
       ),
-    );
-  }
+      textAlign: TextAlign.center,
+    ),
+  );
+}
 
-  Widget _buildMiscTab() {
-    return const Center(
-      child: Text(
-        'Misc options coming soon...',
-        style: TextStyle(
-          fontSize: 18,
-          color: Colors.white,
-          shadows: [
-            Shadow(
-              blurRadius: 4,
-              color: Colors.black54,
-              offset: Offset(1, 1),
-            ),
-          ],
-        ),
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
+/// New: real misc tab with a reset button.
+/// The reset callback lives here (has access to state & navigation),
+/// while the UI is in misc_tab.dart.
+Widget buildMiscTab(_IdleGameScreenState state) {
+  return MiscTab(
+    onResetGame: () async {
+      // 1) Clear all saved preferences (game progress, decks, achievements, etc.)
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+
+      // 2) Reset in-memory collection repository so it matches cleared prefs.
+      await PlayerCollectionRepository.instance.reset();
+
+      // 3) Restart the game screen from a clean slate.
+      if (!state.mounted) return;
+
+      Navigator.of(state.context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const IdleGameScreen()),
+            (route) => false,
+      );
+    },
+  );
 }

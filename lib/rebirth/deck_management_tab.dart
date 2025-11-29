@@ -8,10 +8,8 @@ import '../cards/game_card_models.dart';
 import '../cards/card_catalog.dart';
 import '../cards/game_card_face.dart';
 import '../cards/card_effects.dart';
-
-/// Shared key for player collection in SharedPreferences
-/// MUST match the store tab.
-const String kPlayerCollectionKey = 'player_collection';
+import '../cards/info_dialog.dart';
+import '../cards/player_collection_repository.dart';
 
 /// Manual pack display order used for:
 ///  - Collection sorting (by pack, then rank)
@@ -86,19 +84,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
     final storedActiveDeckIndex = prefs.getInt(_activeDeckIndexKey);
 
-    // ---------- LOAD PLAYER COLLECTION FROM THE SAME PLACE AS STORE ----------
-    final rawCollection = prefs.getString(kPlayerCollectionKey);
-    List<OwnedCard> collection = [];
-    if (rawCollection != null && rawCollection.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(rawCollection) as List<dynamic>;
-        collection = decoded
-            .map((e) => OwnedCard.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } catch (_) {
-        collection = [];
-      }
-    }
+    // ---------- LOAD PLAYER COLLECTION VIA REPOSITORY ----------
+    await PlayerCollectionRepository.instance.init();
+    final collection = PlayerCollectionRepository.instance.allOwnedCards;
 
     // ---------- LOAD DECKS JSON ----------
     final rawDecks = prefs.getString(_decksDataKey);
@@ -130,8 +118,15 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       _selectedViewId = storedView != null ? storedView : 'deck_1';
       _collection = collection;
       _decks = decks;
-      _maxCards = 100; // relaxed for now
-      _maxCapacity = 1000; // relaxed for now
+
+      // Respect stored max cards / capacity
+      _maxCards = (storedMaxCards != null && storedMaxCards >= 1)
+          ? storedMaxCards
+          : 1;
+      _maxCapacity = (storedMaxCapacity != null && storedMaxCapacity >= 1)
+          ? storedMaxCapacity
+          : 1;
+
       _activeDeckIndexZero = activeIndex;
       _loaded = true;
       // _drawerOpen stays false initially so drawer starts closed.
@@ -139,7 +134,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   }
 
   List<_DeckData> _ensureDeckListForSlotCount(
-      List<_DeckData> decks, int slotCount) {
+      List<_DeckData> decks,
+      int slotCount,
+      ) {
     final Map<String, _DeckData> byId = {
       for (final d in decks) d.id: d,
     };
@@ -150,11 +147,13 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       if (byId.containsKey(id)) {
         result.add(byId[id]!);
       } else {
-        result.add(_DeckData(
-          id: id,
-          name: 'Deck ${i + 1}',
-          cardIds: [],
-        ));
+        result.add(
+          _DeckData(
+            id: id,
+            name: 'Deck ${i + 1}',
+            cardIds: [],
+          ),
+        );
       }
     }
     return result;
@@ -179,11 +178,13 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   _DeckData _getOrCreateDeckByIndexZero(int indexZero) {
     while (_decks.length <= indexZero) {
       final id = 'deck_${_decks.length + 1}';
-      _decks.add(_DeckData(
-        id: id,
-        name: 'Deck ${_decks.length + 1}',
-        cardIds: [],
-      ));
+      _decks.add(
+        _DeckData(
+          id: id,
+          name: 'Deck ${_decks.length + 1}',
+          cardIds: [],
+        ),
+      );
     }
     return _decks[indexZero];
   }
@@ -320,165 +321,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     }
   }
 
-  Widget _buildDeckTile({
-    required String label,
-    required bool selected,
-    required bool isActive,
-    required IconData icon,
-    VoidCallback? onTap,
-  }) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected
-              ? Colors.white.withOpacity(0.25)
-              : Colors.white.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color: Colors.amberAccent,
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (isActive)
-              const Icon(
-                Icons.star,
-                size: 16,
-                color: Colors.amber,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDrawerContent() {
-    final deckLabelStyle = const TextStyle(
-      fontSize: 18,
-      fontWeight: FontWeight.bold,
-      color: Colors.white,
-    );
-
-    final sideHeaderStyle = TextStyle(
-      fontSize: 14,
-      color: Colors.grey.shade300,
-      fontWeight: FontWeight.w600,
-    );
-
-    return Container(
-      width: 200,
-      decoration: BoxDecoration(
-        // Less transparent / almost opaque drawer
-        color: Colors.black.withOpacity(0.95),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      padding: const EdgeInsets.all(8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Deck', style: deckLabelStyle),
-          const SizedBox(height: 8),
-
-          // Scrollable drawer list: Deck 1..N, +New, Collection
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  // --- Deck 1..N ---
-                  for (int i = 0; i < _deckSlotCount; i++)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2.0),
-                      child: _buildDeckTile(
-                        label: _decks.length > i
-                            ? _decks[i].name
-                            : 'Deck ${i + 1}',
-                        selected: _selectedViewId == 'deck_${i + 1}',
-                        isActive: _activeDeckIndexZero == i,
-                        icon: Icons.layers,
-                        onTap: () => _selectDeck(i),
-                      ),
-                    ),
-
-                  // --- "+ New" tile always BELOW the last deck ---
-                  if (_deckSlotCount < 10)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2.0),
-                      child: _buildDeckTile(
-                        label: '+ New',
-                        selected: false,
-                        isActive: false,
-                        icon: Icons.layers,
-                        onTap: _showAddDeckSlotDialog,
-                      ),
-                    ),
-
-                  const SizedBox(height: 12),
-
-                  // Collection label + tile
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Collection', style: sideHeaderStyle),
-                  ),
-                  const SizedBox(height: 4),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2.0),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: _selectCollection,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: _showingCollection
-                              ? Colors.white.withOpacity(0.25)
-                              : Colors.white.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: const [
-                            Icon(
-                              Icons.collections_bookmark,
-                              size: 18,
-                              color: Colors.lightBlueAccent,
-                            ),
-                            SizedBox(width: 6),
-                            Text(
-                              'Collection',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _showSimpleInfoDialog(String title, String message) async {
     await showDialog<void>(
       context: context,
@@ -496,7 +338,10 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   }
 
   Future<void> _attemptAddCardToDeck(
-      int deckIndexZero, GameCard card, OwnedCard owned) async {
+      int deckIndexZero,
+      GameCard card,
+      OwnedCard owned,
+      ) async {
     final deck = _getOrCreateDeckByIndexZero(deckIndexZero);
     final deckNumber = deckIndexZero + 1;
 
@@ -518,12 +363,12 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       return;
     }
 
-    // 3) Check capacity by rarity (here using rank as the "rarity/value")
+    // 3) Check capacity by rarity (using rank^2 as value)
     int deckValue = 0;
     for (final id in deck.cardIds) {
       final c = CardCatalog.getById(id);
       if (c != null) {
-        deckValue += c.rank;
+        deckValue += math.pow(c.rank.abs(), 2).toInt();
       }
     }
     final int cardRarity = card.rank;
@@ -553,7 +398,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   }
 
   Future<void> _removeCardFromDeck(
-      int deckIndexZero, GameCard card) async {
+      int deckIndexZero,
+      GameCard card,
+      ) async {
     final deck = _getOrCreateDeckByIndexZero(deckIndexZero);
     final deckNumber = deckIndexZero + 1;
 
@@ -648,92 +495,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     }
   }
 
-  Future<void> _showCardInfoDialog(
-      GameCard card,
-      OwnedCard owned, {
-        bool fromDeck = false,
-        int? deckIndexZero,
-      }) async {
-    final baseCost =
-    CardEffects.baseCost(rank: card.rank, level: owned.level);
-    final scalingFactor =
-    CardEffects.costScalingFactor(level: owned.level);
-
-    String _formatBig(double v) {
-      if (v == 0) return '0';
-      if (v.abs() >= 1e6 || v.abs() < 0.001) {
-        return v.toStringAsExponential(2);
-      }
-      return v.toStringAsFixed(2);
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('${card.name} (Lv ${owned.level})'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Larger card image
-              GameCardFace(
-                card: card,
-                width: 180,
-                height: 260,
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Base cost: ${_formatBig(baseCost)}',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Scaling factor: ${_formatBig(scalingFactor)}',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  card.longDescription,
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Close'),
-          ),
-          if (!fromDeck)
-            TextButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                _showAddToDeckDialog(card, owned);
-              },
-              child: const Text('Add to Deck'),
-            ),
-          if (fromDeck && deckIndexZero != null)
-            TextButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                _removeCardFromDeck(deckIndexZero, card);
-              },
-              child: const Text('Remove from Deck'),
-            ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildCollectionView() {
     if (_collection.isEmpty) {
       return const Center(
@@ -750,17 +511,14 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     }
 
     // Build tiles for each owned card: card art + name + level/exp.
-    final items = _collection
-        .map((owned) {
+    final items = _collection.map((owned) {
       final card = CardCatalog.getById(owned.cardId);
       if (card == null) return null;
       return _OwnedCardDisplayData(
         card: card,
         owned: owned,
       );
-    })
-        .whereType<_OwnedCardDisplayData>()
-        .toList();
+    }).whereType<_OwnedCardDisplayData>().toList();
 
     if (items.isEmpty) {
       return const Center(
@@ -807,7 +565,13 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         final data = items[index];
 
         return GestureDetector(
-          onTap: () => _showCardInfoDialog(data.card, data.owned),
+          onTap: () => showGlobalCardInfoDialog(
+            context: context,
+            card: data.card,
+            owned: data.owned,
+            canAddToDeck: true,
+            onAddToDeck: () => _showAddToDeckDialog(data.card, data.owned),
+          ),
           child: Column(
             children: [
               Expanded(
@@ -822,7 +586,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
                       bottom: 4,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 2),
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black.withOpacity(0.6),
                           borderRadius: BorderRadius.circular(4),
@@ -861,12 +627,12 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     final indexZero = deckIndex - 1;
     final deck = _getOrCreateDeckByIndexZero(indexZero);
 
-    // Compute deck value (sum of ranks).
+    // Compute deck value (sum of ranks^2).
     int deckValue = 0;
     for (final id in deck.cardIds) {
       final c = CardCatalog.getById(id);
       if (c != null) {
-        deckValue += c.rank;
+        deckValue += math.pow(c.rank.abs(), 2).toInt();
       }
     }
 
@@ -911,11 +677,13 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
           final data = items[index];
 
           return GestureDetector(
-            onTap: () => _showCardInfoDialog(
-              data.card,
-              data.owned,
-              fromDeck: true,
-              deckIndexZero: indexZero,
+            onTap: () => showGlobalCardInfoDialog(
+              context: context,
+              card: data.card,
+              owned: data.owned,
+              canRemoveFromDeck: true,
+              onRemoveFromDeck: () =>
+                  _removeCardFromDeck(indexZero, data.card),
             ),
             child: Column(
               children: [
@@ -931,7 +699,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
                         bottom: 4,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 4, vertical: 2),
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.black.withOpacity(0.6),
                             borderRadius: BorderRadius.circular(4),
@@ -1150,6 +920,167 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDeckTile({
+    required String label,
+    required bool selected,
+    required bool isActive,
+    required IconData icon,
+    VoidCallback? onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? Colors.white.withOpacity(0.25)
+              : Colors.white.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: Colors.amberAccent,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (isActive)
+              const Icon(
+                Icons.star,
+                size: 16,
+                color: Colors.amber,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDrawerContent() {
+    final deckLabelStyle = const TextStyle(
+      fontSize: 18,
+      fontWeight: FontWeight.bold,
+      color: Colors.white,
+    );
+
+    final sideHeaderStyle = TextStyle(
+      fontSize: 14,
+      color: Colors.grey.shade300,
+      fontWeight: FontWeight.w600,
+    );
+
+    return Container(
+      width: 200,
+      decoration: BoxDecoration(
+        // Less transparent / almost opaque drawer
+        color: Colors.black.withOpacity(0.95),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      padding: const EdgeInsets.all(8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Deck', style: deckLabelStyle),
+          const SizedBox(height: 8),
+
+          // Scrollable drawer list: Deck 1..N, +New, Collection
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  // --- Deck 1..N ---
+                  for (int i = 0; i < _deckSlotCount; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2.0),
+                      child: _buildDeckTile(
+                        label: _decks.length > i
+                            ? _decks[i].name
+                            : 'Deck ${i + 1}',
+                        selected: _selectedViewId == 'deck_${i + 1}',
+                        isActive: _activeDeckIndexZero == i,
+                        icon: Icons.layers,
+                        onTap: () => _selectDeck(i),
+                      ),
+                    ),
+
+                  // --- "+ New" tile always BELOW the last deck ---
+                  if (_deckSlotCount < 10)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2.0),
+                      child: _buildDeckTile(
+                        label: '+ New',
+                        selected: false,
+                        isActive: false,
+                        icon: Icons.layers,
+                        onTap: _showAddDeckSlotDialog,
+                      ),
+                    ),
+
+                  const SizedBox(height: 12),
+
+                  // Collection label + tile
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Collection', style: sideHeaderStyle),
+                  ),
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2.0),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: _selectCollection,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _showingCollection
+                              ? Colors.white.withOpacity(0.25)
+                              : Colors.white.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: const [
+                            Icon(
+                              Icons.collections_bookmark,
+                              size: 18,
+                              color: Colors.lightBlueAccent,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'Collection',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

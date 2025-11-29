@@ -2,15 +2,38 @@ import 'package:flutter/foundation.dart';
 
 /// A target that card effects can act on.
 ///
-/// IdleGameScreen's State implements this, so card effects can call:
-///  - addOrePerSecond(...)
-///  - addOre(...)
-///
-/// You can extend this later with more operations as needed.
+/// IdleGameScreen's State implements this, so card effects can call
+/// setters like setOrePerSecond, setBaseOrePerClick, etc., using
+/// get(...) + delta patterns to update values.
 abstract class IdleGameEffectTarget {
-  void addOrePerSecond(double amount);
+  double getOrePerSecond();
+  double getBaseOrePerClick();
+  double getRebirthMultiplier();
+  int getRebirthCount();
+  double getBonusOrePerSecond();
+  double getBonusOrePerClick();
+  double getFrenzyMultiplier();
+  double getFrenzyDuration();
+  double getMomentumScale();
+  double getCurrentRebirthGold();
+  double getTotalRefinedGold();
+  double getGold();
+  List<OwnedCard> getAllOwnedCards();
+
+  void addGold(double amount);
   void addOre(double amount);
-  void addBaseOrePerClick(double amount);
+  void turnOnFrenzy();
+  void setFrenzyMultiplier(double value);
+  void setFrenzyDuration(double value);
+  void setFrenzyCooldownFraction(double amount);
+  void setMomentumCap(double amount);
+  void setMomentumScale(double value);
+  void setOrePerSecond(double value);
+  void setBaseOrePerClick(double value);
+  void setBonusOrePerClick(double value);
+  void setBonusOrePerSecond(double value);
+  void setRebirthMultiplier(double amount);
+  void setRandomSpawnChance(double amount);
 }
 
 /// Signature for a card effect function.

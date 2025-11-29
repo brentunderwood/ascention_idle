@@ -1,15 +1,11 @@
 import 'dart:math' as math;
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../cards/game_card_models.dart';
 import '../cards/card_catalog.dart';
 import '../cards/game_card_face.dart';
-
-/// Key used to store the player's collection in SharedPreferences.
-const String kPlayerCollectionKey = 'player_collection';
+import '../cards/player_collection_repository.dart';
 
 /// Model for a card pack configuration.
 class CardPackConfig {
@@ -48,6 +44,9 @@ class CardDrawResult {
 ///    - If none exists, walk DOWN in rank (finalRank-1, finalRank-2, ...)
 ///      and pick from the highest lower rank that exists.
 ///    - If still none exist, fall back to uniform random from the pack.
+///
+/// NOTE: Cards with negative rank (unique cards) are *excluded* from this
+/// distribution and are handled via a separate mechanic.
 CardDrawResult _drawCardForPack({
   required List<GameCard> cards,
   required String packId, // kept for future per-pack tweaks if needed
@@ -58,8 +57,18 @@ CardDrawResult _drawCardForPack({
     throw StateError('Cannot draw from empty card list.');
   }
 
+  // Filter out unique cards (rank < 0) so they are not drawn by
+  // the standard distribution.
+  final List<GameCard> nonUniqueCards =
+  cards.where((c) => c.rank >= 0).toList(growable: false);
+
+  if (nonUniqueCards.isEmpty) {
+    throw StateError(
+      'Cannot draw from card list that only contains unique (negative rank) cards.',
+    );
+  }
+
   // Ensure packLevel is at least 0 to avoid degenerate behavior.
-  // The scaling here is what you already had; leaving it intact.
   final double level = packLevel < 0 ? 0 : packLevel / 4;
 
   // --- Step 1: Sample a raw "cardRank" with geometric-like distribution -----
@@ -89,7 +98,7 @@ CardDrawResult _drawCardForPack({
   math.pow(10, (cardRank - 1) ~/ 10).toInt();
 
   // --- Step 4: Find a card with that rank, with "step-down" fallback --------
-  List<GameCard> rankMatches = cards
+  List<GameCard> rankMatches = nonUniqueCards
       .where((c) => c.rank == finalRank)
       .toList(growable: false);
 
@@ -97,7 +106,7 @@ CardDrawResult _drawCardForPack({
   if (rankMatches.isEmpty) {
     int searchRank = finalRank - 1;
     while (searchRank >= 1 && rankMatches.isEmpty) {
-      final candidates = cards
+      final candidates = nonUniqueCards
           .where((c) => c.rank == searchRank)
           .toList(growable: false);
       if (candidates.isNotEmpty) {
@@ -113,7 +122,7 @@ CardDrawResult _drawCardForPack({
     chosen = rankMatches[rng.nextInt(rankMatches.length)];
   } else {
     // As an absolute fallback (e.g., if all ranks are weird), pick uniformly.
-    chosen = cards[rng.nextInt(cards.length)];
+    chosen = nonUniqueCards[rng.nextInt(nonUniqueCards.length)];
   }
 
   return CardDrawResult(
@@ -256,6 +265,18 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
     return math.pow(level + 1, 3).toInt();
   }
 
+  /// Per-pack info description text.
+  String get _infoDescription {
+    switch (widget.config.id) {
+      case 'lux_aurea':
+        return 'A pack containing cards that generate resources every second';
+      case 'vita_orum':
+        return 'A pack containing cards that generate resources when you click';
+      default:
+        return 'A mysterious pack containing unknown cards.';
+    }
+  }
+
   Future<void> _onBuyPressed(BuildContext context) async {
     final canAfford = widget.currentGold >= _cost;
     if (!canAfford) {
@@ -276,47 +297,82 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
       return;
     }
 
-    // 2) Choose a card using the shared pack distribution.
-    final rng = math.Random();
-    final drawResult = _drawCardForPack(
-      cards: cards,
-      packId: widget.config.id,
-      packLevel: _currentLevel,
-      rng: rng,
-    );
-    final GameCard chosen = drawResult.card;
-    final int expMultiplierIfOwned = drawResult.expMultiplier;
+    // 2) Use the shared PlayerCollectionRepository for collection management.
+    final repo = PlayerCollectionRepository.instance;
+    await repo.init();
 
-    // 3) Load player collection from SharedPreferences.
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(kPlayerCollectionKey);
-    List<OwnedCard> collection = [];
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(raw) as List<dynamic>;
-        collection = decoded
-            .map((e) => OwnedCard.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } catch (_) {
-        // If parsing fails, start with empty collection.
-        collection = [];
+    // Build a quick lookup map: cardId -> OwnedCard.
+    final Map<String, OwnedCard> ownedById = {
+      for (final oc in repo.allOwnedCards) oc.cardId: oc,
+    };
+
+    final rng = math.Random();
+
+    // 3) Identify the unique card for this pack (rank < 0).
+    final List<GameCard> uniqueCandidates =
+    cards.where((c) => c.rank < 0).toList(growable: false);
+    GameCard? uniqueCard =
+    uniqueCandidates.isNotEmpty ? uniqueCandidates.first : null;
+
+    // Check if the player already owns the unique card.
+    final OwnedCard? uniqueOwned =
+    (uniqueCard != null) ? ownedById[uniqueCard.id] : null;
+    final bool hasUnique = uniqueOwned != null;
+
+    // 4) Choose a card using the shared pack distribution, with unique logic.
+    final int baseExp = _cost.round(); // also "gold spent" this purchase
+    final bool canRollForUnique = uniqueCard != null && !hasUnique;
+
+    GameCard chosen;
+    int expMultiplierIfOwned;
+
+    if (canRollForUnique) {
+      // Chance = (gold spent on pack) / 1,000,000, clamped to [0, 1].
+      double uniqueChance = _cost / 1000000.0;
+      if (uniqueChance > 1.0) {
+        uniqueChance = 1.0;
       }
+
+      if (rng.nextDouble() < uniqueChance) {
+        // Hit the unique card instead of the "normal" draw.
+        chosen = uniqueCard!;
+        // For a brand-new unique, treat multiplier as 1 (normal behavior if new).
+        expMultiplierIfOwned = 1;
+      } else {
+        final drawResult = _drawCardForPack(
+          cards: cards,
+          packId: widget.config.id,
+          packLevel: _currentLevel,
+          rng: rng,
+        );
+        chosen = drawResult.card;
+        expMultiplierIfOwned = drawResult.expMultiplier;
+      }
+    } else {
+      // Either no unique card exists, or they already own it:
+      // use the normal distribution for the drawn card.
+      final drawResult = _drawCardForPack(
+        cards: cards,
+        packId: widget.config.id,
+        packLevel: _currentLevel,
+        rng: rng,
+      );
+      chosen = drawResult.card;
+      expMultiplierIfOwned = drawResult.expMultiplier;
     }
 
-    // Find existing card in collection (if any).
-    final index = collection.indexWhere((c) => c.cardId == chosen.id);
-
-    final int baseExp = _cost.round();
+    // 5) Apply experience to the chosen card (normal behavior).
+    final OwnedCard? existingChosen = ownedById[chosen.id];
     final int expGain =
-    index == -1 ? baseExp : baseExp * expMultiplierIfOwned;
+    existingChosen == null ? baseExp : baseExp * expMultiplierIfOwned;
 
-    int totalExp = expGain;
+    int totalExp;
     int level;
     int startingLevel;
     int startingExp;
     int levelsGained = 0;
 
-    if (index == -1) {
+    if (existingChosen == null) {
       // New card: start from the card's base level and 0 exp, then add expGain.
       level = chosen.baseLevel;
       startingLevel = level;
@@ -340,15 +396,15 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
         level: level,
         experience: totalExp,
       );
-      collection.add(owned);
+      ownedById[owned.cardId] = owned;
+      await repo.upsertOwnedCard(owned);
     } else {
       // Existing card: add exp on top of existing.
-      final current = collection[index];
-      level = current.level;
-      startingLevel = current.level;
-      startingExp = current.experience;
+      level = existingChosen.level;
+      startingLevel = existingChosen.level;
+      startingExp = existingChosen.experience;
 
-      totalExp = current.experience + expGain;
+      totalExp = existingChosen.experience + expGain;
 
       while (true) {
         final needed = _expToNextLevel(level);
@@ -361,20 +417,42 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
         }
       }
 
-      final updated = current.copyWith(
+      final updated = existingChosen.copyWith(
         level: level,
         experience: totalExp,
       );
-      collection[index] = updated;
+      ownedById[updated.cardId] = updated;
+      await repo.upsertOwnedCard(updated);
     }
 
-    // 4) Save updated collection back to SharedPreferences.
-    final encoded = jsonEncode(
-      collection.map((c) => c.toJson()).toList(),
-    );
-    await prefs.setString(kPlayerCollectionKey, encoded);
+    // 6) If the unique card is already owned, it gains 1 XP per gold spent
+    //    on this pack (baseExp) *in addition* to the normal card's XP.
+    if (uniqueCard != null && hasUnique && uniqueOwned != null) {
+      int uniqueLevel = uniqueOwned.level;
+      int uniqueExp = uniqueOwned.experience + baseExp;
+      int uniqueLevelsGained = 0;
 
-    // 5) Show result popup.
+      while (true) {
+        final needed = _expToNextLevel(uniqueLevel);
+        if (uniqueExp >= needed) {
+          uniqueExp -= needed;
+          uniqueLevel += 1;
+          uniqueLevelsGained += 1;
+        } else {
+          break;
+        }
+      }
+
+      final updatedUnique = uniqueOwned.copyWith(
+        level: uniqueLevel,
+        experience: uniqueExp,
+      );
+      ownedById[updatedUnique.cardId] = updatedUnique;
+      await repo.upsertOwnedCard(updatedUnique);
+      // (You can optionally include uniqueLevelsGained in the popup text later.)
+    }
+
+    // 7) Show result popup for the drawn card.
     final int nextLevelExpRequirement = _expToNextLevel(level);
     final buffer = StringBuffer()
       ..writeln('You got ${chosen.name}!')
@@ -419,7 +497,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
       ),
     );
 
-    // 6) Finally, actually spend the gold via the callback.
+    // 8) Finally, actually spend the gold via the callback.
     widget.onSpendGold(_cost);
   }
 
@@ -567,9 +645,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
                     builder: (ctx) => AlertDialog(
                       title: Text(widget.config.name),
                       content: Text(
-                        'Info about ${widget.config.name} (Level $_currentLevel)\n'
-                            'Cost: $_costText gold.\n\n'
-                            'Detailed effects will be added later.',
+                        _infoDescription,
                       ),
                       actions: [
                         TextButton(
