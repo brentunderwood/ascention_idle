@@ -239,7 +239,7 @@ class CardCatalog {
     'vita_orum_2': GameCard(
       id: 'vita_orum_2',
       name: 'Poppers',
-      rank: 1,
+      rank: 2,
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'vita_orum',
