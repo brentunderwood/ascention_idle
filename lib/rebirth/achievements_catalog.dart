@@ -103,7 +103,7 @@ final List<AchievementDefinition> kAchievementCatalog = [
     name: 'Big Bad John',
     baseTarget: 1.0,
     progressFn: (IdleGameEffectTarget target) {
-      return target.getOrePerSecond();
+      return target.getBaseOrePerSecond();
     },
     description:
     'Get as much ore per second as you can (not counting bonus multipliers).',
@@ -252,6 +252,72 @@ final List<AchievementDefinition> kAchievementCatalog = [
     },
     description:
     'Find the special Vita Orum card.',
+    unique: true,
+  ),
+
+  AchievementDefinition(
+    id: 'chrono_epoch_first_card',
+    name: 'Procrastinator',
+    baseTarget: 1.0,
+    progressFn: (IdleGameEffectTarget target) {
+      final cards = target.getAllOwnedCards();
+      int count = 0;
+
+      for (final owned in cards) {
+        final template = CardCatalog.getById(owned.cardId);
+        if (template != null && template.packId == 'chrono_epoch') {
+          count++;
+        }
+      }
+
+      return count.toDouble();
+    },
+    description:
+    'Get your first Chrono Epoch card.',
+    unique: true,
+  ),
+
+  AchievementDefinition(
+    id: 'chrono_epoch_completion',
+    name: 'Master of Time',
+    baseTarget: 11.0,
+    progressFn: (IdleGameEffectTarget target) {
+      final cards = target.getAllOwnedCards();
+      int count = 0;
+
+      for (final owned in cards) {
+        final template = CardCatalog.getById(owned.cardId);
+        if (template != null && template.packId == 'chrono_epoch') {
+          count++;
+        }
+      }
+
+      return count.toDouble();
+    },
+    description:
+    'Add all Chrono Epoch cards to your collection.',
+    unique: true,
+  ),
+
+  AchievementDefinition(
+    id: 'chrono_epoch_unique',
+    name: 'A Special Moment',
+    baseTarget: 1.0,
+    progressFn: (IdleGameEffectTarget target) {
+      final cards = target.getAllOwnedCards();
+      int count = 0;
+
+      for (final owned in cards) {
+        final template = CardCatalog.getById(owned.cardId);
+        if (template != null && template.rank < 0 && template.packId == 'chrono_epoch') {
+          count++;
+        }
+      }
+
+      return count.toDouble();
+    },
+    description:
+    'Find the special Chrono Epoch card.',
     unique: true,
   ),
 

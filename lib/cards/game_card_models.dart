@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 /// setters like setOrePerSecond, setBaseOrePerClick, etc., using
 /// get(...) + delta patterns to update values.
 abstract class IdleGameEffectTarget {
-  double getOrePerSecond();
+  double getBaseOrePerSecond();
   double getBaseOrePerClick();
   double getRebirthMultiplier();
   int getRebirthCount();
@@ -16,8 +16,11 @@ abstract class IdleGameEffectTarget {
   double getFrenzyDuration();
   double getMomentumScale();
   double getCurrentRebirthGold();
+  double getGpsClickCoeff();
+  double getBaseClickOpsCoeff();
   double getTotalRefinedGold();
   double getGold();
+  int getManualClickPower();
   List<OwnedCard> getAllOwnedCards();
 
   void addGold(double amount);
@@ -29,11 +32,14 @@ abstract class IdleGameEffectTarget {
   void setMomentumCap(double amount);
   void setMomentumScale(double value);
   void setOrePerSecond(double value);
+  void setGpsClickCoeff(double value);
+  void setBaseClickOpsCoeff(double value);
   void setBaseOrePerClick(double value);
   void setBonusOrePerClick(double value);
   void setBonusOrePerSecond(double value);
   void setRebirthMultiplier(double amount);
   void setRandomSpawnChance(double amount);
+  void setManualClickPower(int amount);
 }
 
 /// Signature for a card effect function.

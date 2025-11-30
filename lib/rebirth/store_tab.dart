@@ -6,6 +6,7 @@ import '../cards/game_card_models.dart';
 import '../cards/card_catalog.dart';
 import '../cards/game_card_face.dart';
 import '../cards/player_collection_repository.dart';
+import '../tutorial_manager.dart';
 
 /// Model for a card pack configuration.
 class CardPackConfig {
@@ -156,6 +157,11 @@ class RebirthStoreTab extends StatelessWidget {
         name: 'Vita Orum',
         packImageAsset: 'assets/vita_orum/card_pack_vita_orum.png',
       ),
+      CardPackConfig(
+        id: 'chrono_epoch',
+        name: 'Chrono Epoch',
+        packImageAsset: 'assets/chrono_epoch/card_pack_chrono_epoch.png',
+      ),
     ];
 
     return Container(
@@ -204,7 +210,7 @@ class RebirthStoreTab extends StatelessWidget {
 /// A single card-pack widget with:
 /// - Name above
 /// - Pack image
-/// - Left/right arrows to change level (0–10)
+/// - Left/right arrows to change level (0–X+1)
 /// - Cost (10^level)
 /// - Buy button (random card from pack)
 /// - Info button below
@@ -228,9 +234,41 @@ class RebirthPackTile extends StatefulWidget {
 
 class _RebirthPackTileState extends State<RebirthPackTile> {
   static const int _minLevel = 0;
-  static const int _maxLevel = 10;
 
   int _currentLevel = _minLevel;
+
+  /// Highest level L such that 10^L <= gold.
+  /// If gold < 1, we treat highest affordable as 0 so default is level 0.
+  int _highestAffordableLevel(double gold) {
+    if (gold < 1) {
+      return 0;
+    }
+    final double log10 = math.log(gold) / math.log(10);
+    final int level = log10.floor();
+    return level < 0 ? 0 : level;
+  }
+
+  /// Maximum selectable level is X+1, where X is highest affordable level.
+  int _maxSelectableLevel() {
+    final int highest = _highestAffordableLevel(widget.currentGold);
+    return highest + 1;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Default selection should be X (highest affordable).
+    _currentLevel = _highestAffordableLevel(widget.currentGold);
+  }
+
+  @override
+  void didUpdateWidget(covariant RebirthPackTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.currentGold != oldWidget.currentGold) {
+      // Whenever gold changes, snap to the new highest affordable level X.
+      _currentLevel = _highestAffordableLevel(widget.currentGold);
+    }
+  }
 
   void _previousLevel() {
     setState(() {
@@ -241,8 +279,9 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
   }
 
   void _nextLevel() {
+    final int maxLevel = _maxSelectableLevel();
     setState(() {
-      if (_currentLevel < _maxLevel) {
+      if (_currentLevel < maxLevel) {
         _currentLevel++;
       }
     });
@@ -272,6 +311,8 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
         return 'A pack containing cards that generate resources every second';
       case 'vita_orum':
         return 'A pack containing cards that generate resources when you click';
+      case 'chrono_epoch':
+        return 'A pack containing cards that manipulate time';
       default:
         return 'A mysterious pack containing unknown cards.';
     }
@@ -499,6 +540,7 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
 
     // 8) Finally, actually spend the gold via the callback.
     widget.onSpendGold(_cost);
+    TutorialManager.instance.onRebirthStoreShown(context);
   }
 
   @override

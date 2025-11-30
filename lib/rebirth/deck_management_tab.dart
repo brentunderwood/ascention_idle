@@ -10,6 +10,7 @@ import '../cards/game_card_face.dart';
 import '../cards/card_effects.dart';
 import '../cards/info_dialog.dart';
 import '../cards/player_collection_repository.dart';
+import '../tutorial_manager.dart';
 
 /// Manual pack display order used for:
 ///  - Collection sorting (by pack, then rank)
@@ -48,7 +49,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   static const String _activeDeckIndexKey = 'rebirth_active_deck_index';
 
   int _deckSlotCount = 1; // starts with 1 deck by default
-  String _selectedViewId = 'deck_1';
+  String _selectedViewId = 'collection';
   bool _loaded = false;
 
   /// Drawer starts CLOSED whenever this tab is opened.
@@ -115,7 +116,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
     setState(() {
       _deckSlotCount = slotCount;
-      _selectedViewId = storedView != null ? storedView : 'deck_1';
+      _selectedViewId = storedView != null ? storedView : 'collection';
       _collection = collection;
       _decks = decks;
 
@@ -395,6 +396,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         duration: const Duration(seconds: 2),
       ),
     );
+
+    // Tutorial: card successfully added to deck.
+    TutorialManager.instance.onCardAddedToDeck(context);
   }
 
   Future<void> _removeCardFromDeck(

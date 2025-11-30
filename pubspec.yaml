@@ -74,6 +74,7 @@ flutter:
     - assets/lux_aurea/rank_8/
     - assets/lux_aurea/rank_9/
     - assets/lux_aurea/rank_10/
+    - assets/lux_aurea/unique/
     - assets/vita_orum/
     - assets/vita_orum/rank_1/
     - assets/vita_orum/rank_2/
@@ -85,6 +86,19 @@ flutter:
     - assets/vita_orum/rank_8/
     - assets/vita_orum/rank_9/
     - assets/vita_orum/rank_10/
+    - assets/vita_orum/unique/
+    - assets/chrono_epoch/
+    - assets/chrono_epoch/rank_1/
+    - assets/chrono_epoch/rank_2/
+    - assets/chrono_epoch/rank_3/
+    - assets/chrono_epoch/rank_4/
+    - assets/chrono_epoch/rank_5/
+    - assets/chrono_epoch/rank_6/
+    - assets/chrono_epoch/rank_7/
+    - assets/chrono_epoch/rank_8/
+    - assets/chrono_epoch/rank_9/
+    - assets/chrono_epoch/rank_10/
+    - assets/chrono_epoch/unique/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware

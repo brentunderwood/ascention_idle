@@ -11,8 +11,11 @@ import 'cards/game_card_models.dart';
 import 'upgrades_screen.dart';
 import 'rebirth/achievements_catalog.dart';
 import 'misc_tab.dart'; // NEW: misc tab split into its own file
+import 'tutorial_manager.dart'; // NEW: tutorial logic
+import 'utilities/display_functions.dart'; // NEW: numeric display helpers
 
 part 'idle_game_state.dart';
+part 'idle_game_state_accessors.dart';
 
 /// Change this to swap the background later.
 const String kGameBackgroundAsset =
@@ -40,6 +43,7 @@ const String kUpgradeDeckSnapshotKey = 'rebirth_upgrade_deck_snapshot';
 
 /// Tracks manual clicks on the rock.
 const String kManualClickCountKey = 'manual_click_count';
+const String kManualClickPowerKey = 'manual_click_power';
 
 /// Frenzy spell persistence keys.
 const String kSpellFrenzyActiveKey = 'spell_frenzy_active';
@@ -137,6 +141,11 @@ Widget buildIdleGameScaffold(
         state.setState(() {
           state._currentTabIndex = index;
         });
+
+        // Tutorial hook: entering Rebirth tab shows store (step 3 / 4).
+        if (index == 2) {
+          TutorialManager.instance.onRebirthStoreShown(state.context);
+        }
       },
       items: _navItems
           .map(
@@ -164,7 +173,7 @@ Widget buildTopBar(_IdleGameScreenState state) {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            'Refined Gold: ${state._gold.toStringAsFixed(0)}',
+            'Refined Gold: ${displayNumber(state._gold)}',
             style: const TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.bold,
@@ -181,7 +190,7 @@ Widget buildTopBar(_IdleGameScreenState state) {
           ),
           const SizedBox(height: 4),
           Text(
-            'Total Refined Gold: ${state._totalRefinedGold.toStringAsFixed(0)}',
+            'Total Refined Gold: ${displayNumber(state._totalRefinedGold)}',
             style: const TextStyle(
               fontSize: 16,
               color: Colors.white,
@@ -205,13 +214,8 @@ Widget buildTopBar(_IdleGameScreenState state) {
   state._rebirthGoal == 'create_antimatter' ? 'Antimatter' : 'Gold Ore';
   final orePerClickDisplay = state._currentOrePerClickForDisplay();
 
-  // Show effective ore per second, including Frenzy + overall multiplier.
-  final bool frenzyNow = state._isFrenzyCurrentlyActive();
-  final double baseOrePerSecond =
-      state._orePerSecond + state._bonusOrePerSecond;
-  final double effectiveOrePerSecond = baseOrePerSecond *
-      (frenzyNow ? state._spellFrenzyMultiplier : 1.0) *
-      state._overallMultiplier;
+  // Use centralized ore-per-second formula so this matches game logic.
+  final double effectiveOrePerSecond = state.getOrePerSecond();
 
   return Padding(
     padding: const EdgeInsets.symmetric(
@@ -222,7 +226,7 @@ Widget buildTopBar(_IdleGameScreenState state) {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Text(
-          '$resourceLabel: ${state._goldOre.toStringAsFixed(0)}',
+          '$resourceLabel: ${displayNumber(state._goldOre)}',
           style: const TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
@@ -239,7 +243,7 @@ Widget buildTopBar(_IdleGameScreenState state) {
         ),
         const SizedBox(height: 4),
         Text(
-          'Ore per second: ${effectiveOrePerSecond.toStringAsFixed(2)}',
+          'Ore per second: ${displayNumber(effectiveOrePerSecond)}',
           style: const TextStyle(
             fontSize: 16,
             color: Colors.white,
@@ -255,7 +259,7 @@ Widget buildTopBar(_IdleGameScreenState state) {
         ),
         const SizedBox(height: 4),
         Text(
-          'Ore per click: ${orePerClickDisplay.toStringAsFixed(2)}',
+          'Ore per click: ${displayNumber(orePerClickDisplay)}',
           style: const TextStyle(
             fontSize: 16,
             color: Colors.white,

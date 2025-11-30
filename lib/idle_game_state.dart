@@ -16,43 +16,40 @@ class _Nugget {
 const String kDeckMaxCardsKey = 'rebirth_deck_max_cards';
 const String kDeckMaxCapacityKey = 'rebirth_deck_max_capacity';
 
+/// Keys for ore-per-click coefficient persistence.
+const String kGpsClickCoeffKey = 'gps_click_coeff';
+const String kTotalOreClickCoeffKey = 'total_ore_click_coeff';
+const String kClickMultiplicityKey = 'click_multiplicity';
+
+/// Key for ore-per-second coefficient that converts base click into OPS.
+const String kBaseClickOpsCoeffKey = 'base_click_ops_coeff';
+
 /// Main game state for the idle game.
 ///
 /// Implements [IdleGameEffectTarget] so card effects can modify the
 /// current run's values (ore, orePerSecond, etc.) in a controlled way.
 class _IdleGameScreenState extends State<IdleGameScreen>
-    with SingleTickerProviderStateMixin
-    implements IdleGameEffectTarget {
+    with SingleTickerProviderStateMixin, IdleGameEffectTargetMixin {
   int _currentTabIndex = 0;
 
   double _goldOre = 0;
   double _totalGoldOre = 0;
   double _gold = 0.0;
-
-  /// Core ore per second from standard upgrades.
   double _orePerSecond = 0;
-
-  /// Additive bonus ore per second (applied before Frenzy & overall multiplier).
   double _bonusOrePerSecond = 0.0;
-
-  /// Flat bonus added to the base 1.0 ore per click.
   double _baseOrePerClick = 0.0;
-
-  /// Additive bonus ore per click (applied before multipliers).
   double _bonusOrePerClick = 0.0;
+  double _gpsClickCoeff = 0.0;
+  double _totalOreClickCoeff = 0.0;
+  double _clickMultiplicity = 1.0;
+  double _baseClickOpsCoeff = 0.0;
 
   int _rebirthCount = 0;
   double _totalRefinedGold = 0;
-
-  /// Which goal applies to the *current* run
-  /// (e.g., 'mine_gold' or 'create_antimatter').
   String _rebirthGoal = 'mine_gold';
-
-  /// Momentum system for clicks (kept for future use).
   int _momentumClicks = 0;
   DateTime? _lastClickTime;
 
-  /// Momentum tuning values (persisted).
   double _momentumCap = 0.0;
   double _momentumScale = 1.0;
 
@@ -61,6 +58,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
   /// Manual clicks on the rock (persisted, reset on rebirth).
   int _manualClickCount = 0;
+  int _manualClickPower = 1;
 
   /// Animation state for the rock (3D-ish tilt).
   double _rockScale = 1.0;
@@ -129,6 +127,13 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     )..repeat(reverse: true);
 
     _initAndStart();
+
+    // Tutorial: show the welcome message the first time the main screen
+    // is actually on screen.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      TutorialManager.instance.onMainScreenFirstShown(context);
+    });
   }
 
   Future<void> _initAndStart() async {
@@ -162,6 +167,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final storedTotalRefinedGold = _prefs!.getDouble(kTotalRefinedGoldKey);
     final storedRebirthGoal = _prefs!.getString(kRebirthGoalKey);
     final storedManualClicks = _prefs!.getInt(kManualClickCountKey);
+    final storedManualClickPower = _prefs!.getInt(kManualClickPowerKey);
 
     final storedFrenzyActive = _prefs!.getBool(kSpellFrenzyActiveKey);
     final storedFrenzyLastTrigger = _prefs!.getInt(kSpellFrenzyLastTriggerKey);
@@ -194,6 +200,17 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final storedBonusGoldFromNuggets =
     _prefs!.getInt(kBonusRebirthGoldFromNuggetsKey);
 
+    // New ore-per-click related coefficients.
+    final storedGpsClickCoeff = _prefs!.getDouble(kGpsClickCoeffKey);
+    final storedTotalOreClickCoeff =
+    _prefs!.getDouble(kTotalOreClickCoeffKey);
+    final storedClickMultiplicity =
+    _prefs!.getDouble(kClickMultiplicityKey);
+
+    // New ore-per-second coefficient.
+    final storedBaseClickOpsCoeff =
+    _prefs!.getDouble(kBaseClickOpsCoeffKey);
+
     setState(() {
       _goldOre = storedGoldOre ?? 0;
       _totalGoldOre = storedTotalGoldOre ?? 0;
@@ -204,6 +221,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _totalRefinedGold = storedTotalRefinedGold ?? 0;
       _rebirthGoal = storedRebirthGoal ?? 'mine_gold';
       _manualClickCount = storedManualClicks ?? 0;
+      _manualClickPower = storedManualClickPower ?? 1;
       _lastActiveTime = storedLastActive != null
           ? DateTime.fromMillisecondsSinceEpoch(storedLastActive)
           : null;
@@ -232,6 +250,12 @@ class _IdleGameScreenState extends State<IdleGameScreen>
           storedRandomSpawnChance ?? 0.0;
       _bonusRebirthGoldFromNuggets =
           storedBonusGoldFromNuggets ?? 0;
+
+      _gpsClickCoeff = storedGpsClickCoeff ?? 0.0;
+      _totalOreClickCoeff = storedTotalOreClickCoeff ?? 0.0;
+      _clickMultiplicity = storedClickMultiplicity ?? 1.0;
+
+      _baseClickOpsCoeff = storedBaseClickOpsCoeff ?? 0.0;
     });
   }
 
@@ -248,6 +272,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setDouble(kTotalRefinedGoldKey, _totalRefinedGold);
     await _prefs!.setString(kRebirthGoalKey, _rebirthGoal);
     await _prefs!.setInt(kManualClickCountKey, _manualClickCount);
+    await _prefs!.setInt(kManualClickPowerKey, _manualClickPower);
     await _prefs!
         .setInt(kLastActiveKey, _lastActiveTime!.millisecondsSinceEpoch);
 
@@ -282,6 +307,15 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setDouble(kRandomSpawnChanceKey, _randomSpawnChance);
     await _prefs!.setInt(
         kBonusRebirthGoldFromNuggetsKey, _bonusRebirthGoldFromNuggets);
+
+    // New ore-per-click related coefficients.
+    await _prefs!.setDouble(kGpsClickCoeffKey, _gpsClickCoeff);
+    await _prefs!.setDouble(
+        kTotalOreClickCoeffKey, _totalOreClickCoeff);
+    await _prefs!.setDouble(kClickMultiplicityKey, _clickMultiplicity);
+
+    // New ore-per-second coefficient.
+    await _prefs!.setDouble(kBaseClickOpsCoeffKey, _baseClickOpsCoeff);
   }
 
   /// Return the prefs key for the stored level of a given achievement.
@@ -305,7 +339,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     maxCapacity += 1;
 
     // If maxCards < sqrt(maxCapacity) AFTER increasing capacity, +1 max cards.
-    if (math.pow(maxCards+1,2) <= maxCapacity && maxCards<100) {
+    if (math.pow(maxCards + 1, 2) <= maxCapacity && maxCards < 100) {
       maxCards += 1;
     }
 
@@ -394,19 +428,17 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         momentumChanged = true;
       }
 
-      // Apply Frenzy + overall multiplier to (base + bonus) ore per second.
-      final bool frenzyActiveNow = _isFrenzyCurrentlyActive();
-      final double frenzyMult =
-      frenzyActiveNow ? _spellFrenzyMultiplier : 1.0;
-      final double baseOrePerSecond =
-          _orePerSecond + _bonusOrePerSecond;
-      final double effectiveOrePerSecond =
-          baseOrePerSecond * frenzyMult * _overallMultiplier;
+      // Compute effective ore per second from centralized formula.
+      final double effectiveOrePerSecond = _computeOrePerSecond();
 
       setState(() {
         _goldOre += effectiveOrePerSecond;
         _totalGoldOre += effectiveOrePerSecond;
       });
+
+      // Tutorial: ore changed from passive income.
+      TutorialManager.instance
+          .onGoldOreChanged(context, _manualClickCount.toDouble());
 
       // Handle nugget spawn / expiry once per second.
       _tickNugget();
@@ -469,10 +501,14 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   }
 
   Future<void> _applyOfflineProgress() async {
-    final double baseOrePerSecond =
+    // base part for OPS (before frenzy/overall multipliers)
+    final double baseCoreOps =
         _orePerSecond + _bonusOrePerSecond;
+    final double baseClick = 1.0 + _baseOrePerClick;
+    final double baseCombined =
+        baseCoreOps + _baseClickOpsCoeff * baseClick;
 
-    if (_lastActiveTime == null || baseOrePerSecond <= 0) {
+    if (_lastActiveTime == null || baseCombined <= 0) {
       // Nothing to do, just update last active.
       await _saveProgress();
       return;
@@ -499,7 +535,8 @@ class _IdleGameScreenState extends State<IdleGameScreen>
           _lastActiveTime!.millisecondsSinceEpoch ~/ 1000;
       final int offlineEndSec = now.millisecondsSinceEpoch ~/ 1000;
       final int frenzyStartSec =
-          _spellFrenzyLastTriggerTime!.millisecondsSinceEpoch ~/ 1000;
+          _spellFrenzyLastTriggerTime!.millisecondsSinceEpoch ~/
+              1000;
       final int frenzyEndSec =
           frenzyStartSec + _spellFrenzyDurationSeconds.round();
 
@@ -510,22 +547,26 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       final int normalSeconds = math.max(0, seconds - frenzyOverlap);
 
       final double normalEarned =
-          normalSeconds * baseOrePerSecond * _overallMultiplier;
+          normalSeconds * baseCombined * _overallMultiplier;
       final double frenzyEarned = frenzyOverlap *
-          baseOrePerSecond *
+          baseCombined *
           _spellFrenzyMultiplier *
           _overallMultiplier;
 
       earned = normalEarned + frenzyEarned;
     } else {
-      // No relevant Frenzy interval: use (base + bonus) orePerSecond only.
-      earned = seconds * baseOrePerSecond * _overallMultiplier;
+      // No relevant Frenzy interval: use baseCombined only.
+      earned = seconds * baseCombined * _overallMultiplier;
     }
 
     setState(() {
       _goldOre += earned;
       _totalGoldOre += earned;
     });
+
+    // Tutorial: ore changed due to offline progress.
+    TutorialManager.instance
+        .onGoldOreChanged(context, _manualClickCount.toDouble());
 
     // Achievements may be completed from offline gains.
     await _evaluateAndApplyAchievements();
@@ -567,25 +608,25 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   }
 
   double _calculateRebirthGold() {
-    if (_totalGoldOre <= 0) return 0;
+    if (_goldOre <= 0) return 0;
 
     // level = floor(log_100(total_gold_ore))
-    double levelRaw = math.log(_totalGoldOre) / math.log(100);
-    levelRaw *= levelRaw;
+    double levelRaw = math.pow(_goldOre, 1 / 3).floorToDouble();
 
-    double manualClick;
-    if (_manualClickCount == 0) {
-      manualClick = 0;
+    double manualClickCycles;
+    double scaling_factor = 1.1;
+    if (_manualClickCount < 100) {
+      manualClickCycles = 0;
     } else {
-      manualClick = math.log(_manualClickCount) / math.log(10) - 1;
-      manualClick = math.max(manualClick.floor(), 0).toDouble();
+      manualClickCycles = math.log(
+          _manualClickCount * (scaling_factor - 1) / 100 + 1) /
+          math.log(scaling_factor);
+      manualClickCycles = manualClickCycles.floor().toDouble();
+      manualClickCycles =
+          manualClickCycles * (manualClickCycles + 1) / 2.0;
     }
 
-    // Add bonus rebirth gold from random nuggets.
-    final double nuggetBonus =
-    _bonusRebirthGoldFromNuggets.toDouble();
-
-    return levelRaw.floorToDouble() + manualClick + nuggetBonus;
+    return levelRaw + manualClickCycles;
   }
 
   Future<void> _clearCardUpgradeCounts() async {
@@ -651,10 +692,12 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       }
 
       // At the START of the new rebirth:
-      // overallMultiplier = rebirthMultiplier * achievementMultiplier * sqrt(maxGoldMultiplier)
-      final double combined = _rebirthMultiplier *
-          _achievementMultiplier *
-          math.sqrt(_maxGoldMultiplier);
+      final double combined = (1 +
+          _rebirthMultiplier *
+              math.log(rebirthGold) /
+              math.log(1000) *
+              _achievementMultiplier *
+              (1 + math.log(_maxGoldMultiplier) / math.log(1000)));
       _overallMultiplier = math.max(1.0, combined);
 
       // Rebirth multiplier no longer applies; reset it to 1 for the new run.
@@ -677,6 +720,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       // Reset manual click count for the new run
       _manualClickCount = 0;
+      _manualClickPower = 1;
 
       // Reset nugget-related state (including spawn chance back to 0).
       _nuggets.clear();
@@ -709,12 +753,88 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     );
   }
 
-  /// For now: click value is base 1 per click + any per-click bonuses.
+  /// Centralized ore-per-click calculation.
+  ///
+  /// Formula:
+  ///   baseTerm =
+  ///     1.0
+  ///   + _baseOrePerClick
+  ///   + _gpsClickCoeff * _orePerSecond        (clicks scale with OPS, if enabled)
+  ///   + _totalOreClickCoeff * sqrt(_totalGoldOre)
+  ///
+  ///   momentumFactor =
+  ///     1.0 + clamp(_momentumScale * _momentumClicks, 0, _momentumCap)
+  ///     (if momentumCap <= 0, this collapses to 1.0, so momentum is neutral)
+  ///
+  ///   orePerClick =
+  ///     baseTerm
+  ///       * phaseMult
+  ///       * frenzyMult
+  ///       * momentumFactor
+  ///       * _overallMultiplier
+  ///       * _clickMultiplicity
+  ///
+  /// [manualClicksOverride] lets us evaluate for "clicks after this press".
+  double _computeOrePerClick({int? manualClicksOverride}) {
+    final int clicks =
+        manualClicksOverride ?? _manualClickCount;
+
+    final int phase = _computeClickPhase(clicks);
+    final double phaseMult = (phase == 9) ? 10.0 : 1.0;
+
+    final bool frenzyActiveNow = _isFrenzyCurrentlyActive();
+    final double frenzyMult =
+    frenzyActiveNow ? _spellFrenzyMultiplier : 1.0;
+
+    final double baseTerm = 1.0 +
+        _baseOrePerClick +
+        _gpsClickCoeff * _orePerSecond +
+        _totalOreClickCoeff * math.pow(_totalGoldOre, 0.5);
+
+    // Momentum: defaults to neutral (1.0) when momentum isn't unlocked.
+    double momentumFactor = 1.0;
+    if (_momentumCap > 0 && _momentumScale > 0) {
+      final double scaled = _momentumScale * _momentumClicks;
+      final double clamped = scaled.clamp(0.0, _momentumCap);
+      momentumFactor += clamped;
+    }
+
+    return baseTerm *
+        phaseMult *
+        frenzyMult *
+        momentumFactor *
+        _overallMultiplier *
+        _clickMultiplicity;
+  }
+
+  /// Centralized ore-per-second calculation.
+  ///
+  /// Formula:
+  ///   (baseOrePerSecond + baseClickOpsCoeff * baseOrePerClick)
+  ///     * frenzyMult * _overallMultiplier
+  ///
+  /// where:
+  ///   baseOrePerSecond = _orePerSecond + _bonusOrePerSecond
+  ///   baseOrePerClick  = 1.0 + _baseOrePerClick
+  double _computeOrePerSecond() {
+    final double baseOrePerSecond =
+        _orePerSecond + _bonusOrePerSecond;
+
+    final bool frenzyActiveNow = _isFrenzyCurrentlyActive();
+    final double frenzyMult =
+    frenzyActiveNow ? _spellFrenzyMultiplier : 1.0;
+
+    final double baseCombined =
+        baseOrePerSecond + _baseClickOpsCoeff * _baseOrePerClick;
+
+    return baseCombined * frenzyMult * _overallMultiplier;
+  }
+
+  /// Update cached preview value using the centralized ore-per-click formula.
   void _updatePreviewPerClick() {
     setState(() {
       _lastComputedOrePerClick =
-          (1.0 + _baseOrePerClick + _bonusOrePerClick) *
-              _overallMultiplier;
+          _computeOrePerClick(manualClicksOverride: _manualClickCount);
     });
   }
 
@@ -734,191 +854,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     _saveProgress();
   }
 
-  // ===== IdleGameEffectTarget implementation =====
-  @override
-  List<OwnedCard> getAllOwnedCards() {
-    return PlayerCollectionRepository.instance.allOwnedCards;
-  }
-
-  @override
-  double getGold() {
-    return _gold;
-  }
-
-  @override
-  double getTotalRefinedGold() {
-    return _totalRefinedGold;
-  }
-
-  @override
-  double getOrePerSecond() {
-    return _orePerSecond;
-  }
-
-  @override
-  double getCurrentRebirthGold() {
-    return _calculateRebirthGold();
-  }
-
-  @override
-  int getRebirthCount() {
-    return _rebirthCount;
-  }
-
-  @override
-  double getBaseOrePerClick() {
-    // "Base click" value used for Reciprocity – 1 + core per-click bonus.
-    return 1.0 + _baseOrePerClick;
-  }
-
-  @override
-  double getBonusOrePerSecond() => _bonusOrePerSecond;
-
-  @override
-  double getBonusOrePerClick() => _bonusOrePerClick;
-
-  @override
-  double getFrenzyMultiplier() => _spellFrenzyMultiplier;
-
-  @override
-  double getFrenzyDuration() => _spellFrenzyDurationSeconds;
-
-  @override
-  double getMomentumScale() => _momentumScale;
-
-  void addGold(double value) {
-    _gold += value;
-    _totalRefinedGold += value;
-  }
-
-  @override
-  void setGold(double value) {
-    _gold = value;
-  }
-
-  @override
-  void setTotalRefinedGold(double value) {
-    _totalRefinedGold = value;
-  }
-
-  /// Applies an ore/s value to the core ore-per-second.
-  @override
-  void setOrePerSecond(double value) {
-    _orePerSecond = value;
-  }
-
-  /// Set bonus ore per second (applied before multipliers).
-  @override
-  void setBonusOrePerSecond(double value) {
-    _bonusOrePerSecond = value;
-  }
-
-  /// Applies an instant ore gain.
-  @override
-  void addOre(double amount) {
-    _goldOre += amount;
-    _totalGoldOre += amount;
-  }
-
-  /// Sets base ore per click (before phase & multipliers).
-  /// Incoming value is the "base click" (1 + stored bonus).
-  @override
-  void setBaseOrePerClick(double value) {
-    _baseOrePerClick = value - 1.0;
-    _updatePreviewPerClick();
-  }
-
-  /// Sets bonus ore per click (applied before multipliers).
-  @override
-  void setBonusOrePerClick(double value) {
-    _bonusOrePerClick = value;
-    _updatePreviewPerClick();
-  }
-
-  @override
-  void turnOnFrenzy() {
-    _spellFrenzyActive = true;
-  }
-
-  @override
-  void setFrenzyMultiplier(double value) {
-    _spellFrenzyMultiplier = value;
-  }
-
-  @override
-  void setFrenzyDuration(double value) {
-    _spellFrenzyDurationSeconds = value;
-  }
-
-  @override
-  void setFrenzyCooldownFraction(double amount) {
-    _spellFrenzyCooldownSeconds =
-        _spellFrenzyDurationSeconds * amount;
-  }
-
-  /// Set the momentum cap (overwrites existing value).
-  @override
-  void setMomentumCap(double amount) {
-    _momentumCap = amount;
-  }
-
-  /// Set the momentum scale.
-  @override
-  void setMomentumScale(double value) {
-    _momentumScale = value;
-  }
-
-  // ===== Multipliers API (getters / setters) =====
-
-  /// Getter for the rebirth multiplier (applies to *next* rebirth).
-  @override
-  double getRebirthMultiplier() => _rebirthMultiplier;
-
-  /// Setter for the rebirth multiplier.
-  @override
-  void setRebirthMultiplier(double value) {
-    setState(() {
-      _rebirthMultiplier = value;
-    });
-    _saveProgress();
-  }
-
-  /// Getter for the overall multiplier (applies to this run).
-  double getOverallMultiplier() => _overallMultiplier;
-
-  /// Setter for the overall multiplier. Clamped to at least 1.
-  void setOverallMultiplier(double value) {
-    setState(() {
-      _overallMultiplier = math.max(1.0, value);
-    });
-    _updatePreviewPerClick();
-    _saveProgress();
-  }
-
-  /// Optional helpers for achievements / UI if you need them later.
-  double getAchievementMultiplier() => _achievementMultiplier;
-
-  void addAchievementMultiplier(double delta) {
-    setState(() {
-      _achievementMultiplier += delta;
-    });
-    _saveProgress();
-  }
-
-  double getMaxGoldMultiplier() => _maxGoldMultiplier;
-
-  // ===== Random spawn chance API =====
-
-  double getRandomSpawnChance() => _randomSpawnChance;
-
-  @override
-  void setRandomSpawnChance(double value) {
-    setState(() {
-      _randomSpawnChance = value;
-    });
-    _saveProgress();
-  }
-
   // ====== Helper logic ======
 
   /// Compute click phase for a given manual click count.
@@ -927,18 +862,33 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   /// phase = floor(manualClicks * 10 / 10^log_clicks)
   /// Clamped to [1, 9] so we always have a valid rock_0x.png.
   int _computeClickPhase(int manualClicks) {
+    double scaling_factor = 1.1;
     if (manualClicks <= 0) return 1;
 
-    final double rawLog = math.log(manualClicks) / math.log(10);
-    int logClicks = rawLog.ceil();
-    if (logClicks < 2) logClicks = 2;
+    double manualClickCycles;
+    double lower_bound;
+    double upper_bound;
+    if (manualClicks < 100) {
+      manualClickCycles = 0;
+      lower_bound = 0;
+      upper_bound = 100;
+    } else {
+      manualClickCycles = math.log(
+          manualClicks * (scaling_factor - 1) / 100 + 1) /
+          math.log(scaling_factor);
+      manualClickCycles = manualClickCycles.floor().toDouble();
+      lower_bound = 100 *
+          (math.pow(scaling_factor, manualClickCycles) - 1) /
+          (scaling_factor - 1);
+      upper_bound = 100 *
+          (math.pow(scaling_factor, manualClickCycles + 1) - 1) /
+          (scaling_factor - 1);
+    }
 
-    final double denom = math.pow(10, logClicks).toDouble();
-    final double value = manualClicks * 10 / denom;
+    double progress =
+        (manualClicks - lower_bound) / (upper_bound - lower_bound);
+    int phase = (progress * 9).floor() + 1;
 
-    int phase = value.floor();
-    if (phase <= 0) phase = 1;
-    if (phase > 9) phase = 9;
     return phase;
   }
 
@@ -959,15 +909,10 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   }
 
   /// Helper for "current ore per click" for display.
-  /// Base is (1 + base + bonus), with 10x in phase 9, and
-  /// additional multiplier if Frenzy and overall are active.
+  ///
+  /// Uses the centralized ore-per-click calculation.
   double _currentOrePerClickForDisplay() {
-    final base = 1.0 + _baseOrePerClick + _bonusOrePerClick;
-    final phase = _currentClickPhase();
-    final phaseMult = phase == 9 ? 10.0 : 1.0;
-    final frenzyMult =
-    _isFrenzyCurrentlyActive() ? _spellFrenzyMultiplier : 1.0;
-    return base * phaseMult * frenzyMult * _overallMultiplier;
+    return _computeOrePerClick();
   }
 
   /// Activate Frenzy at the current time.
@@ -1031,20 +976,11 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final double tiltX = normY * maxTilt;
     final double tiltY = -normX * maxTilt;
 
-    // Compute phase for this click using the *new* click index.
-    final int clicksAfterThis = _manualClickCount + 1;
-    final int phase = _computeClickPhase(clicksAfterThis);
-    final double phaseMult = phase == 9 ? 10.0 : 1.0;
-
-    // Frenzy multiplier if active.
-    final bool frenzyActiveNow = _isFrenzyCurrentlyActive();
-    final double frenzyMult =
-    frenzyActiveNow ? _spellFrenzyMultiplier : 1.0;
-
-    final double baseClick =
-        1.0 + _baseOrePerClick + _bonusOrePerClick;
+    // Compute ore-per-click using the centralized formula,
+    // with manualClicks incremented by 1 for this press.
+    final int clicksAfterThis = _manualClickCount + 1 * _manualClickPower;
     final double orePerClick =
-        baseClick * phaseMult * frenzyMult * _overallMultiplier;
+    _computeOrePerClick(manualClicksOverride: clicksAfterThis);
 
     setState(() {
       // Animate: shrink + 3D tilt toward tap point.
@@ -1062,6 +998,10 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _lastComputedOrePerClick = orePerClick;
       _manualClickCount = clicksAfterThis;
     });
+
+    // Tutorial: ore changed due to a manual click.
+    TutorialManager.instance
+        .onGoldOreChanged(context, _manualClickCount.toDouble());
 
     _saveProgress();
   }

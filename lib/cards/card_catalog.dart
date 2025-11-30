@@ -42,7 +42,7 @@ class CardCatalog {
       longDescription:
       'Increases your ore per second by 1. Not much, but it\'s a start.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
-        target.setOrePerSecond(target.getOrePerSecond() + 1.0);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + 1.0);
       },
     ),
     'lux_aurea_2': GameCard(
@@ -58,7 +58,7 @@ class CardCatalog {
       longDescription:
       'Increases your ore per second by 10. Just don\'t get caught trying to spend it.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
-        target.setOrePerSecond(target.getOrePerSecond() + 10.0);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + 10.0);
       },
     ),
     'lux_aurea_3': GameCard(
@@ -74,7 +74,7 @@ class CardCatalog {
       longDescription:
       'Increases your ore per second by 100. Smells like dirt and capitalism.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
-        target.setOrePerSecond(target.getOrePerSecond() + 100.0);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + 100.0);
       },
     ),
     'lux_aurea_4': GameCard(
@@ -91,7 +91,7 @@ class CardCatalog {
       'Increases your ore per second by 1K. Maybe now you can afford to move somewhere nicer.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(10.0, 3).toDouble();
-        target.setOrePerSecond(target.getOrePerSecond() + delta);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + delta);
       },
     ),
     'lux_aurea_5': GameCard(
@@ -108,7 +108,7 @@ class CardCatalog {
       'Increases your ore per second by 10K. No people, but somehow plenty of gold.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(10.0, 4).toDouble();
-        target.setOrePerSecond(target.getOrePerSecond() + delta);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + delta);
       },
     ),
     'lux_aurea_6': GameCard(
@@ -126,7 +126,7 @@ class CardCatalog {
       'Increases your ore per second by 100K. Now we\'re talking.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(10.0, 5).toDouble();
-        target.setOrePerSecond(target.getOrePerSecond() + delta);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + delta);
       },
     ),
     'lux_aurea_7': GameCard(
@@ -144,7 +144,7 @@ class CardCatalog {
       'Increases your ore per second by 1M. People are starving in the streets, but the church needs a new diamond custed altar, so....',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(10.0, 6).toDouble();
-        target.setOrePerSecond(target.getOrePerSecond() + delta);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + delta);
       },
     ),
     'lux_aurea_8': GameCard(
@@ -162,7 +162,7 @@ class CardCatalog {
       'Increases your ore per second by 10M. Now how much does it cost to make the magicians go away?',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(10.0, 7).toDouble();
-        target.setOrePerSecond(target.getOrePerSecond() + delta);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + delta);
       },
     ),
     'lux_aurea_9': GameCard(
@@ -179,7 +179,7 @@ class CardCatalog {
       'Increases your ore per second by 100M. We must be running out of cards...right?',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(10.0, 8).toDouble();
-        target.setOrePerSecond(target.getOrePerSecond() + delta);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + delta);
       },
     ),
     'lux_aurea_10': GameCard(
@@ -196,7 +196,7 @@ class CardCatalog {
       'Increases your ore per second by 1B. If you can raise it to a full dragon, you will have riches beyond measure.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(10.0, 9).toDouble();
-        target.setOrePerSecond(target.getOrePerSecond() + delta);
+        target.setOrePerSecond(target.getBaseOrePerSecond() + delta);
       },
     ),
 
@@ -213,7 +213,7 @@ class CardCatalog {
       longDescription:
       'Increases your ore per second by [number purchased] squared. The only ore generating card you need.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
-        target.setOrePerSecond(target.getOrePerSecond() + math.pow(upgradesThisRun,2) - math.pow(upgradesThisRun-1,2));
+        target.setOrePerSecond(target.getBaseOrePerSecond() + math.pow(upgradesThisRun,2) - math.pow(upgradesThisRun-1,2));
       },
     ),
 
@@ -233,6 +233,23 @@ class CardCatalog {
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(cardLevel, 2).toDouble();
         target.setBaseOrePerClick(target.getBaseOrePerClick() + delta);
+      },
+    ),
+
+    'vita_orum_2': GameCard(
+      id: 'vita_orum_2',
+      name: 'Poppers',
+      rank: 1,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'vita_orum',
+      backgroundAsset: 'assets/vita_orum/card_base_vita_orum.png',
+      artAsset: 'assets/vita_orum/rank_1/lv_1_poppers.png',
+      shortDescription: 'Did you mean the noisy kind or the sniffy kind?',
+      longDescription:
+      'Allows you to blow through those rocks a little faster to get to that sweet, sweet nugg. Scales based on level and count.',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setManualClickPower(target.getManualClickPower() + cardLevel);
       },
     ),
 
@@ -296,17 +313,9 @@ class CardCatalog {
       'Each upgrade adds 1% of your base click value to your ore per second and .01% * [level] of your base ore per second to your click value.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         // Bonus click from base ore/sec
-        final currentBonusClick = target.getBonusOrePerClick();
-        final deltaClick =
-            cardLevel * target.getOrePerSecond() / 10000;
-        target.setBonusOrePerClick(currentBonusClick + deltaClick);
+        target.setGpsClickCoeff(target.getGpsClickCoeff() + cardLevel / 10000);
 
-        // Bonus ore/sec from base click
-        final currentBonusPerSecond = target.getBonusOrePerSecond();
-        final deltaPerSecond = target.getBaseOrePerClick();
-        target.setBonusOrePerSecond(
-          currentBonusPerSecond + deltaPerSecond,
-        );
+        target.setBaseClickOpsCoeff(target.getBaseClickOpsCoeff() + 0.01);
       },
     ),
 
@@ -321,11 +330,9 @@ class CardCatalog {
       artAsset: 'assets/vita_orum/rank_10/lv_1_stone_egg.png',
       shortDescription: 'It\'s not just a boulder, it\'s a rock.',
       longDescription:
-      'A magical egg from the very heart of the earth. Multiplies resource gain in your next rebirth by [number purchased]x[level]. If you hatch it, you will find unlimited power.',
+      'A magical egg from the very heart of the earth. Increases your click power based on how much ore you have mined this rebirth. If you hatch it, you will find unlimited power.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
-        target.setRebirthMultiplier(
-          target.getRebirthMultiplier() + cardLevel.toDouble(),
-        );
+        target.setGpsClickCoeff(target.getGpsClickCoeff() + 1);
       },
     ),
 
@@ -343,6 +350,24 @@ class CardCatalog {
       'Every second has a [rebirth gold this round]x[number purchased]x[level] chance of generating 1 gold nugget. Clicking on these gives you 1 (or more if spawn rate > 1) gold, which you can spend immediately.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         target.setRandomSpawnChance(target.getCurrentRebirthGold() * upgradesThisRun * cardLevel);
+      },
+    ),
+
+    //Chronon Epoch
+    'chrono_epoch_1': GameCard(
+      id: 'chrono_epoch_1',
+      name: 'One Small Step',
+      rank: 1,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'chrono_epoch',
+      backgroundAsset: 'assets/chrono_epoch/card_base_chrono_epoch.png',
+      artAsset: 'assets/chrono_epoch/rank_1/lv_1_one_small_step.png',
+      shortDescription: 'Because even a regular sized step is too hard',
+      longDescription:
+      'On your next rebirth, add a multipier to resource generation based on how many of this card you have and the amount of gold you have earned this run',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setRebirthMultiplier(upgradesThisRun.toDouble());
       },
     ),
   };
