@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Definition model for a "Next Run" option.
-class _NextRunOption {
+class _ActivityOption {
   final String id;
   final String name;
   final String description;
@@ -10,7 +10,7 @@ class _NextRunOption {
   final bool lockedByDefault;
   final int unlockCost; // in refined gold
 
-  const _NextRunOption({
+  const _ActivityOption({
     required this.id,
     required this.name,
     required this.description,
@@ -20,30 +20,30 @@ class _NextRunOption {
   });
 }
 
-class NextRunTab extends StatefulWidget {
+class ActivityTab extends StatefulWidget {
   final double currentGold;
   final ValueChanged<double> onSpendGold;
 
-  const NextRunTab({
+  const ActivityTab({
     super.key,
     required this.currentGold,
     required this.onSpendGold,
   });
 
   @override
-  State<NextRunTab> createState() => _NextRunTabState();
+  State<ActivityTab> createState() => _ActivityTabState();
 }
 
-class _NextRunTabState extends State<NextRunTab> {
-  static const List<_NextRunOption> _options = [
-    _NextRunOption(
+class _ActivityTabState extends State<ActivityTab> {
+  static const List<_ActivityOption> _options = [
+    _ActivityOption(
       id: 'mine_gold',
       name: 'Mine gold',
       description: 'Focus this run on generating as much gold ore as possible.',
       icon: Icons.attach_money,
       lockedByDefault: false,
     ),
-    _NextRunOption(
+    _ActivityOption(
       id: 'create_antimatter',
       name: 'Create antimatter',
       description:
@@ -94,7 +94,7 @@ class _NextRunTabState extends State<NextRunTab> {
 
   String _unlockKey(String id) => 'next_run_${id}_unlocked';
 
-  Future<void> _selectOption(_NextRunOption option) async {
+  Future<void> _selectOption(_ActivityOption option) async {
     if (!_isUnlocked(option.id)) return;
 
     setState(() {
@@ -109,7 +109,7 @@ class _NextRunTabState extends State<NextRunTab> {
     return _unlocked[id] ?? false;
   }
 
-  Future<void> _unlockOption(_NextRunOption option) async {
+  Future<void> _unlockOption(_ActivityOption option) async {
     if (_isUnlocked(option.id)) return;
     if (widget.currentGold < option.unlockCost) {
       // Not enough gold; feedback via snackbar handled in button.
@@ -287,8 +287,7 @@ class _NextRunTabState extends State<NextRunTab> {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(
                                           const SnackBar(
-                                            content:
-                                            Text('Not enough gold'),
+                                            content: Text('Not enough gold'),
                                             duration: Duration(seconds: 2),
                                           ),
                                         );

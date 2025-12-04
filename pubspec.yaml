@@ -99,6 +99,18 @@ flutter:
     - assets/chrono_epoch/rank_9/
     - assets/chrono_epoch/rank_10/
     - assets/chrono_epoch/unique/
+    - assets/stygian_void/
+    - assets/stygian_void/rank_1/
+    - assets/stygian_void/rank_2/
+    - assets/stygian_void/rank_3/
+    - assets/stygian_void/rank_4/
+    - assets/stygian_void/rank_5/
+    - assets/stygian_void/rank_6/
+    - assets/stygian_void/rank_7/
+    - assets/stygian_void/rank_8/
+    - assets/stygian_void/rank_9/
+    - assets/stygian_void/rank_10/
+    - assets/stygian_void/unique/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../cards/game_card_models.dart';
 import '../cards/card_catalog.dart';
@@ -132,7 +133,7 @@ CardDrawResult _drawCardForPack({
   );
 }
 
-class RebirthStoreTab extends StatelessWidget {
+class RebirthStoreTab extends StatefulWidget {
   final double currentGold;
 
   /// Callback to actually spend refined gold in the parent.
@@ -145,24 +146,96 @@ class RebirthStoreTab extends StatelessWidget {
   });
 
   @override
+  State<RebirthStoreTab> createState() => _RebirthStoreTabState();
+}
+
+class _RebirthStoreTabState extends State<RebirthStoreTab> {
+  /// All possible packs. Visibility is controlled via unlock rules.
+  static const List<CardPackConfig> _allPacks = [
+    CardPackConfig(
+      id: 'lux_aurea',
+      name: 'Lux Aurea',
+      packImageAsset: 'assets/lux_aurea/card_pack_lux_aurea.png',
+    ),
+    CardPackConfig(
+      id: 'vita_orum',
+      name: 'Vita Orum',
+      packImageAsset: 'assets/vita_orum/card_pack_vita_orum.png',
+    ),
+    CardPackConfig(
+      id: 'chrono_epoch',
+      name: 'Chrono Epoch',
+      packImageAsset: 'assets/chrono_epoch/card_pack_chrono_epoch.png',
+    ),
+    CardPackConfig(
+      id: 'stygian_void',
+      name: 'Stygian Void',
+      packImageAsset:
+      'assets/stygian_void/card_pack_stygian_void.png',
+    ),
+  ];
+
+  /// Which pack IDs are currently visible, based on unlock state.
+  Set<String> _visiblePackIds = <String>{};
+  bool _loadedVisibility = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPackVisibility();
+  }
+
+  /// Central place to define "unlock requirements" per pack.
+  ///
+  /// When you add new packs later, add a case here for their unlock rule.
+  Future<void> _loadPackVisibility() async {
+    final prefs = await SharedPreferences.getInstance();
+    final Set<String> visible = <String>{};
+
+    for (final pack in _allPacks) {
+      bool isVisible;
+
+      switch (pack.id) {
+        case 'stygian_void':
+        // Visible only if "Create antimatter" has been unlocked on NextRunTab.
+        // NextRunTab stores unlock flags as: 'next_run_<id>_unlocked'.
+          final antimatterUnlocked =
+              prefs.getBool('next_run_create_antimatter_unlocked') ?? false;
+          isVisible = antimatterUnlocked;
+          break;
+
+      // Default: always visible (no unlock requirement).
+        default:
+          isVisible = true;
+      }
+
+      if (isVisible) {
+        visible.add(pack.id);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _visiblePackIds = visible;
+      _loadedVisibility = true;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    const packs = [
-      CardPackConfig(
-        id: 'lux_aurea',
-        name: 'Lux Aurea',
-        packImageAsset: 'assets/lux_aurea/card_pack_lux_aurea.png',
-      ),
-      CardPackConfig(
-        id: 'vita_orum',
-        name: 'Vita Orum',
-        packImageAsset: 'assets/vita_orum/card_pack_vita_orum.png',
-      ),
-      CardPackConfig(
-        id: 'chrono_epoch',
-        name: 'Chrono Epoch',
-        packImageAsset: 'assets/chrono_epoch/card_pack_chrono_epoch.png',
-      ),
-    ];
+    if (!_loadedVisibility) {
+      return Container(
+        color: Colors.black.withOpacity(0.3),
+        width: double.infinity,
+        child: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    final visiblePacks = _allPacks
+        .where((p) => _visiblePackIds.contains(p.id))
+        .toList(growable: false);
 
     return Container(
       color: Colors.black.withOpacity(0.3),
@@ -190,13 +263,13 @@ class RebirthStoreTab extends StatelessWidget {
             const SizedBox(height: 16),
 
             // Multiple pack tiles, reusable via CardPackConfig + RebirthPackTile
-            ...packs.map(
+            ...visiblePacks.map(
                   (pack) => Padding(
                 padding: const EdgeInsets.only(bottom: 16.0),
                 child: RebirthPackTile(
                   config: pack,
-                  currentGold: currentGold,
-                  onSpendGold: onSpendGold,
+                  currentGold: widget.currentGold,
+                  onSpendGold: widget.onSpendGold,
                 ),
               ),
             ),
@@ -313,6 +386,8 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
         return 'A pack containing cards that generate resources when you click';
       case 'chrono_epoch':
         return 'A pack containing cards that manipulate time';
+      case 'stygian_void':
+        return 'A pack containing cards that tap into antimatter and the dark abyss.';
       default:
         return 'A mysterious pack containing unknown cards.';
     }

@@ -373,7 +373,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       }
     }
     final int cardRarity = card.rank;
-    final int newValue = deckValue + cardRarity;
+    final int newValue = deckValue + math.pow(cardRarity,2).toInt();
 
     if (newValue > _maxCapacity) {
       await _showSimpleInfoDialog(
@@ -627,6 +627,8 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     );
   }
 
+  /// Builds the deck view for a specific deck (index is 1-based for display).
+  /// Uses a ReorderableListView so the player can drag to re-order cards.
   Widget _buildDeckView(int deckIndex) {
     final indexZero = deckIndex - 1;
     final deck = _getOrCreateDeckByIndexZero(indexZero);
@@ -645,17 +647,8 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       for (final oc in _collection) oc.cardId: oc,
     };
 
-    final List<_OwnedCardDisplayData> items = [];
-    for (final id in deck.cardIds) {
-      final card = CardCatalog.getById(id);
-      final owned = ownedById[id];
-      if (card != null && owned != null) {
-        items.add(_OwnedCardDisplayData(card: card, owned: owned));
-      }
-    }
-
     Widget body;
-    if (deck.cardIds.isEmpty || items.isEmpty) {
+    if (deck.cardIds.isEmpty) {
       body = Center(
         child: Text(
           'Deck $deckIndex is empty.\nAdd cards from your Collection.',
@@ -667,74 +660,41 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         ),
       );
     } else {
-      // Keep insertion order for deck cards (no sorting).
-      body = GridView.builder(
+      // Reorderable list of cards in the deck, in current deck order.
+      body = ReorderableListView.builder(
         padding: const EdgeInsets.all(8.0),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 0.6,
-        ),
-        itemCount: items.length,
+        itemCount: deck.cardIds.length,
+        onReorder: (oldIndex, newIndex) {
+          setState(() {
+            if (newIndex > oldIndex) {
+              newIndex -= 1;
+            }
+            final movedId = deck.cardIds.removeAt(oldIndex);
+            deck.cardIds.insert(newIndex, movedId);
+          });
+          _saveDeckPrefs();
+        },
         itemBuilder: (context, index) {
-          final data = items[index];
+          final id = deck.cardIds[index];
+          final card = CardCatalog.getById(id);
+          final owned = ownedById[id];
 
-          return GestureDetector(
-            onTap: () => showGlobalCardInfoDialog(
-              context: context,
-              card: data.card,
-              owned: data.owned,
-              canRemoveFromDeck: true,
-              onRemoveFromDeck: () =>
-                  _removeCardFromDeck(indexZero, data.card),
-            ),
-            child: Column(
-              children: [
-                Expanded(
-                  child: FittedBox(
-                    fit: BoxFit.contain,
-                    child: GameCardFace(
-                      card: data.card,
-                      width: 90,
-                      height: 140,
-                      overlay: Positioned(
-                        left: 4,
-                        bottom: 4,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            'Lv ${data.owned.level}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  data.card.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
+          if (card == null || owned == null) {
+            // Keep a placeholder so indexes stay consistent.
+            return ListTile(
+              key: ValueKey('missing_$id'),
+              title: const Text(
+                'Missing card',
+                style: TextStyle(color: Colors.white),
+              ),
+            );
+          }
+
+          return _buildReorderableDeckItem(
+            key: ValueKey(id),
+            card: card,
+            owned: owned,
+            deckIndexZero: indexZero,
           );
         },
       );
@@ -742,7 +702,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
     final isActive = (_activeDeckIndexZero == indexZero);
 
-    // Wrap header + stats row + grid in a Column
+    // Wrap header + stats row + list in a Column
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -814,6 +774,81 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         ),
         Expanded(child: body),
       ],
+    );
+  }
+
+  /// Single reorderable deck row: card face, name, level, drag handle, etc.
+  Widget _buildReorderableDeckItem({
+    required Key key,
+    required GameCard card,
+    required OwnedCard owned,
+    required int deckIndexZero,
+  }) {
+    return ListTile(
+      key: key,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      onTap: () => showGlobalCardInfoDialog(
+        context: context,
+        card: card,
+        owned: owned,
+        canRemoveFromDeck: true,
+        onRemoveFromDeck: () => _removeCardFromDeck(deckIndexZero, card),
+      ),
+      leading: SizedBox(
+        width: 50,
+        height: 70,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          child: GameCardFace(
+            card: card,
+            width: 90,
+            height: 140,
+            overlay: Positioned(
+              left: 4,
+              bottom: 4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Lv ${owned.level}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      title: Text(
+        card.name,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+        ),
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        card.shortDescription,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 12,
+        ),
+      ),
+      trailing: const Icon(
+        Icons.drag_handle,
+        color: Colors.white54,
+      ),
     );
   }
 

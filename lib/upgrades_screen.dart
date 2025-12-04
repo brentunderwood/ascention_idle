@@ -10,6 +10,7 @@ import 'cards/game_card_face.dart';
 import 'cards/card_effects.dart';
 import 'cards/player_collection_repository.dart';
 import 'cards/info_dialog.dart';
+import 'utilities/display_functions.dart';
 
 /// Deck persistence keys (same string values as in deck_management_tab.dart).
 const String _deckSlotCountKey = 'rebirth_deck_slot_count';
@@ -357,7 +358,12 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       cardLevel: cardLevel,
       ownedCount: ownedCount,
     );
-    final costText = cost.toStringAsFixed(0);
+
+    // Can the player afford this upgrade?
+    final bool canAfford = widget.currentResource >= cost;
+
+    // Use shared display notation (e.g. 1.2K, 3.4M, etc.)
+    final costText = displayNumber(cost);
 
     // If somehow the card isn't in the collection yet, synthesize an OwnedCard
     // so the info dialog still has something to show.
@@ -368,131 +374,137 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
           experience: 0,
         );
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _handlePurchase(row),
-      child: Container(
-        padding: const EdgeInsets.all(8.0),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.45),
-          borderRadius: BorderRadius.circular(8.0),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // Card image (match Rebirth Store / deck usage).
-            SizedBox(
-              width: 70,
-              height: 100,
-              child: FittedBox(
-                fit: BoxFit.contain,
-                child: GameCardFace(
-                  card: card,
-                  width: 90,
-                  height: 140,
+    return Opacity(
+      opacity: canAfford ? 1.0 : 0.4, // gray out when unaffordable
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _handlePurchase(row),
+        child: Container(
+          padding: const EdgeInsets.all(8.0),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.45),
+            borderRadius: BorderRadius.circular(8.0),
+            border: Border.all(
+              color: canAfford ? Colors.white24 : Colors.white10,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Card image (match Rebirth Store / deck usage).
+              SizedBox(
+                width: 70,
+                height: 100,
+                child: FittedBox(
+                  fit: BoxFit.contain,
+                  child: GameCardFace(
+                    card: card,
+                    width: 90,
+                    height: 140,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
+              const SizedBox(width: 12),
 
-            // Name + long description + level
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    card.name,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [
-                        Shadow(
-                          blurRadius: 4,
-                          color: Colors.black54,
-                          offset: Offset(1, 1),
-                        ),
-                      ],
+              // Name + short description + level
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      card.name,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        shadows: [
+                          Shadow(
+                            blurRadius: 4,
+                            color: Colors.black54,
+                            offset: Offset(1, 1),
+                          ),
+                        ],
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    card.longDescription,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    const SizedBox(height: 4),
+                    Text(
+                      card.shortDescription, // <-- use short description now
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white70,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Level: $cardLevel',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white60,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Owned + Cost
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text(
+                    'Owned',
+                    style: TextStyle(
                       fontSize: 12,
                       color: Colors.white70,
                     ),
                   ),
-                  const SizedBox(height: 4),
                   Text(
-                    'Level: $cardLevel',
+                    ownedCount.toString(),
                     style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Cost',
+                    style: TextStyle(
                       fontSize: 12,
-                      color: Colors.white60,
+                      color: Colors.white70,
+                    ),
+                  ),
+                  Text(
+                    '$costText ${widget.resourceLabel}',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color:
+                      canAfford ? Colors.amber : Colors.grey, // dim cost color
                     ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(width: 8),
+              const SizedBox(width: 4),
 
-            // Owned + Cost
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                const Text(
-                  'Owned',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
+              // Info button (shared dialog)
+              IconButton(
+                icon: const Icon(
+                  Icons.info_outline,
+                  color: Colors.white,
                 ),
-                Text(
-                  ownedCount.toString(),
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
+                onPressed: () => showGlobalCardInfoDialog(
+                  context: context,
+                  card: card,
+                  owned: effectiveOwned,
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Cost',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
-                ),
-                Text(
-                  '$costText ${widget.resourceLabel}',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.amber,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 4),
-
-            // Info button (shared dialog)
-            IconButton(
-              icon: const Icon(
-                Icons.info_outline,
-                color: Colors.white,
               ),
-              onPressed: () => showGlobalCardInfoDialog(
-                context: context,
-                card: card,
-                owned: effectiveOwned,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

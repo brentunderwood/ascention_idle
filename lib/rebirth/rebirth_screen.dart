@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'next_run_tab.dart';
+import 'activity_tab.dart';
 import 'store_tab.dart';
 import 'deck_management_tab.dart';
 import 'achievements_tab.dart';
@@ -95,7 +95,7 @@ class _RebirthScreenState extends State<RebirthScreen>
                 onSpendGold: widget.onSpendGold,
                 achievementMultiplier: widget.achievementMultiplier,
               ),
-              NextRunTab(
+              ActivityTab(
                 currentGold: widget.currentGold,
                 onSpendGold: widget.onSpendGold,
               ),

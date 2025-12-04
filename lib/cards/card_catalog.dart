@@ -244,7 +244,7 @@ class CardCatalog {
       evolutionLevel: 1,
       packId: 'vita_orum',
       backgroundAsset: 'assets/vita_orum/card_base_vita_orum.png',
-      artAsset: 'assets/vita_orum/rank_1/lv_1_poppers.png',
+      artAsset: 'assets/vita_orum/rank_2/lv_1_poppers.png',
       shortDescription: 'Did you mean the noisy kind or the sniffy kind?',
       longDescription:
       'Allows you to blow through those rocks a little faster to get to that sweet, sweet nugg. Scales based on level and count.',

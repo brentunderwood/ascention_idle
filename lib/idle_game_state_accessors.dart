@@ -21,6 +21,11 @@ implements IdleGameEffectTarget {
   }
 
   @override
+  double getGoldOre() {
+    return (_this._goldOre);
+  }
+
+  @override
   double getTotalRefinedGold() {
     return (_this._totalRefinedGold);
   }
@@ -255,6 +260,23 @@ implements IdleGameEffectTarget {
     });
     _this._saveProgress();
   }
+
+  // ===== Tracked click / cycle / card-count stats API =====
+
+  /// Manual click cycles this rebirth (derived from the current manual click count).
+  double getManualClickCycles() => _this._manualClickCyclesThisRun;
+
+  /// Total manual click cycles across all time (sum over completed rebirths).
+  double getTotalManualClickCycles() => _this._totalManualClickCycles;
+
+  /// Physical rock presses this run (does not include click multipliers).
+  int getClicksThisRun() => _this._clicksThisRun;
+
+  /// Physical rock presses across all time (does not include multipliers).
+  int getTotalClicks() => _this._totalClicks;
+
+  /// Highest per-card upgrade count ever reached (all time).
+  int getMaxCardCount() => _this._maxCardCount;
 
   // ===== Internal helper to access the concrete state instance =====
   //

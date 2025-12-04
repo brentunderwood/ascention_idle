@@ -20,6 +20,7 @@ abstract class IdleGameEffectTarget {
   double getBaseClickOpsCoeff();
   double getTotalRefinedGold();
   double getGold();
+  double getGoldOre();
   int getManualClickPower();
   List<OwnedCard> getAllOwnedCards();
 

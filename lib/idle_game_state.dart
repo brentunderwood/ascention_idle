@@ -24,6 +24,13 @@ const String kClickMultiplicityKey = 'click_multiplicity';
 /// Key for ore-per-second coefficient that converts base click into OPS.
 const String kBaseClickOpsCoeffKey = 'base_click_ops_coeff';
 
+/// Keys for click and manual-click-cycle tracking.
+const String kClicksThisRunKey = 'clicks_this_run';
+const String kTotalClicksKey = 'total_clicks';
+const String kManualClickCyclesThisRunKey = 'manual_click_cycles_this_run';
+const String kTotalManualClickCyclesKey = 'total_manual_click_cycles';
+const String kMaxCardCountKey = 'max_card_count';
+
 /// Main game state for the idle game.
 ///
 /// Implements [IdleGameEffectTarget] so card effects can modify the
@@ -59,6 +66,18 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   /// Manual clicks on the rock (persisted, reset on rebirth).
   int _manualClickCount = 0;
   int _manualClickPower = 1;
+
+  /// New tracked stats:
+  /// - manualClickCyclesThisRun: derived from manualClickCount for this rebirth.
+  /// - totalManualClickCycles: cumulative across all time.
+  /// - clicksThisRun: physical rock presses this run (no multipliers).
+  /// - totalClicks: physical rock presses across all time (no multipliers).
+  /// - maxCardCount: highest per-card upgrade count ever reached.
+  double _manualClickCyclesThisRun = 0.0;
+  double _totalManualClickCycles = 0.0;
+  int _clicksThisRun = 0;
+  int _totalClicks = 0;
+  int _maxCardCount = 0;
 
   /// Animation state for the rock (3D-ish tilt).
   double _rockScale = 1.0;
@@ -211,6 +230,15 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final storedBaseClickOpsCoeff =
     _prefs!.getDouble(kBaseClickOpsCoeffKey);
 
+    // New tracked-click / manual-cycle / max-card stats.
+    final storedClicksThisRun = _prefs!.getInt(kClicksThisRunKey);
+    final storedTotalClicks = _prefs!.getInt(kTotalClicksKey);
+    final storedManualClickCyclesThisRun =
+    _prefs!.getDouble(kManualClickCyclesThisRunKey);
+    final storedTotalManualClickCycles =
+    _prefs!.getDouble(kTotalManualClickCyclesKey);
+    final storedMaxCardCount = _prefs!.getInt(kMaxCardCountKey);
+
     setState(() {
       _goldOre = storedGoldOre ?? 0;
       _totalGoldOre = storedTotalGoldOre ?? 0;
@@ -256,6 +284,14 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _clickMultiplicity = storedClickMultiplicity ?? 1.0;
 
       _baseClickOpsCoeff = storedBaseClickOpsCoeff ?? 0.0;
+
+      _clicksThisRun = storedClicksThisRun ?? 0;
+      _totalClicks = storedTotalClicks ?? 0;
+      _manualClickCyclesThisRun =
+          storedManualClickCyclesThisRun ?? 0.0;
+      _totalManualClickCycles =
+          storedTotalManualClickCycles ?? 0.0;
+      _maxCardCount = storedMaxCardCount ?? 0;
     });
   }
 
@@ -316,6 +352,15 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
     // New ore-per-second coefficient.
     await _prefs!.setDouble(kBaseClickOpsCoeffKey, _baseClickOpsCoeff);
+
+    // New tracked stats.
+    await _prefs!.setInt(kClicksThisRunKey, _clicksThisRun);
+    await _prefs!.setInt(kTotalClicksKey, _totalClicks);
+    await _prefs!.setDouble(
+        kManualClickCyclesThisRunKey, _manualClickCyclesThisRun);
+    await _prefs!.setDouble(
+        kTotalManualClickCyclesKey, _totalManualClickCycles);
+    await _prefs!.setInt(kMaxCardCountKey, _maxCardCount);
   }
 
   /// Return the prefs key for the stored level of a given achievement.
@@ -500,6 +545,23 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     }
   }
 
+  /// Shared helper for computing manualClickCycles from a click count.
+  double _computeManualClickCyclesFromClicks(int manualClicks) {
+    const double scaling_factor = 1.1;
+    if (manualClicks < 100) {
+      return 0.0;
+    }
+
+    double manualClickCycles = math.log(
+        manualClicks * (scaling_factor - 1) / 100 + 1) /
+        math.log(scaling_factor);
+    manualClickCycles = manualClickCycles.floor().toDouble();
+    manualClickCycles =
+        manualClickCycles * (manualClickCycles + 1) / 2.0;
+
+    return manualClickCycles;
+  }
+
   Future<void> _applyOfflineProgress() async {
     // base part for OPS (before frenzy/overall multipliers)
     final double baseCoreOps =
@@ -610,21 +672,14 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   double _calculateRebirthGold() {
     if (_goldOre <= 0) return 0;
 
-    // level = floor(log_100(total_gold_ore))
-    double levelRaw = math.pow(_goldOre, 1 / 3).floorToDouble();
+    // level = floor(cuberoot(total_gold_ore))
+    double levelRaw = math.pow(_totalGoldOre, 1 / 3).floorToDouble();
 
-    double manualClickCycles;
-    double scaling_factor = 1.1;
-    if (_manualClickCount < 100) {
-      manualClickCycles = 0;
-    } else {
-      manualClickCycles = math.log(
-          _manualClickCount * (scaling_factor - 1) / 100 + 1) /
-          math.log(scaling_factor);
-      manualClickCycles = manualClickCycles.floor().toDouble();
-      manualClickCycles =
-          manualClickCycles * (manualClickCycles + 1) / 2.0;
-    }
+    final double manualClickCycles =
+    _computeManualClickCyclesFromClicks(_manualClickCount);
+
+    // Track this run's manual click cycles.
+    _manualClickCyclesThisRun = manualClickCycles;
 
     return levelRaw + manualClickCycles;
   }
@@ -671,7 +726,18 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final selectedGoal =
         _prefs!.getString(kNextRunSelectedKey) ?? 'mine_gold';
 
+    // Snapshot current run's manual click cycles once for "all time" accumulation.
+    final double manualCyclesThisRun =
+    _computeManualClickCyclesFromClicks(_manualClickCount);
+
     setState(() {
+      // Update tracked manual-cycle stats.
+      _manualClickCyclesThisRun = manualCyclesThisRun;
+      _totalManualClickCycles += manualCyclesThisRun;
+
+      // New run: reset per-run click counter.
+      _clicksThisRun = 0;
+
       // Update the rebirth goal for this run
       _rebirthGoal = selectedGoal;
 
@@ -850,6 +916,11 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       ) {
     setState(() {
       card.cardEffect?.call(this, cardLevel, upgradesThisRun);
+
+      // Track the highest per-card upgrade count across all time.
+      if (upgradesThisRun > _maxCardCount) {
+        _maxCardCount = upgradesThisRun;
+      }
     });
     _saveProgress();
   }
@@ -997,6 +1068,10 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _totalGoldOre += orePerClick;
       _lastComputedOrePerClick = orePerClick;
       _manualClickCount = clicksAfterThis;
+
+      // Track clicks: "physical presses", not including multipliers.
+      _clicksThisRun += 1;
+      _totalClicks += 1;
     });
 
     // Tutorial: ore changed due to a manual click.
