@@ -62,6 +62,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/
+    - assets/click_screen_art/
     - assets/click_screen_art/gold_mining/
     - assets/lux_aurea/
     - assets/lux_aurea/rank_1/

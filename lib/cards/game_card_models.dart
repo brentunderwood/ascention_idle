@@ -22,7 +22,9 @@ abstract class IdleGameEffectTarget {
   double getGold();
   double getGoldOre();
   int getManualClickPower();
+  double getClickMultiplicity();
   List<OwnedCard> getAllOwnedCards();
+  double getOrePerSecondTransfer();
 
   void addGold(double amount);
   void addOre(double amount);
@@ -41,6 +43,10 @@ abstract class IdleGameEffectTarget {
   void setRebirthMultiplier(double amount);
   void setRandomSpawnChance(double amount);
   void setManualClickPower(int amount);
+  void setClickMultiplicity(double amount);
+  void updateAntimatterPolynomialScalars(int degree, int coefficient);
+  void simulateOfflineSeconds(int seconds);
+  void setOrePerSecondTransfer(double amount)
 }
 
 /// Signature for a card effect function.

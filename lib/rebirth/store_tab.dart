@@ -197,10 +197,15 @@ class _RebirthStoreTabState extends State<RebirthStoreTab> {
 
       switch (pack.id) {
         case 'stygian_void':
-        // Visible only if "Create antimatter" has been unlocked on NextRunTab.
-        // NextRunTab stores unlock flags as: 'next_run_<id>_unlocked'.
+        // Visible only if "Create antimatter" has been unlocked on ActivityTab.
+        //
+        // ActivityTab uses the key 'next_run_antimatter_unlocked'.
+        // We also accept the old 'next_run_create_antimatter_unlocked'
+        // for backwards compatibility.
           final antimatterUnlocked =
-              prefs.getBool('next_run_create_antimatter_unlocked') ?? false;
+              prefs.getBool('next_run_antimatter_unlocked') ??
+                  prefs.getBool('next_run_create_antimatter_unlocked') ??
+                  false;
           isVisible = antimatterUnlocked;
           break;
 

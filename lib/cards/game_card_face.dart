@@ -56,6 +56,14 @@ class GameCardFace extends StatelessWidget {
           final dx = cardWidth * artOffsetXFactor;
           final dy = cardHeight * artOffsetYFactor;
 
+          // Use cardHeight as the single scaling reference for star layout,
+          // so their size and position are consistent relative to the card.
+          final double starSize = cardHeight * 0.10; // ~14% of card height
+          final double starTopPadding = cardHeight * 0.06; // 6% from top
+          final double starHorizontalPadding = cardHeight * 0.02;
+
+          final int starCount = card.rank.abs();
+
           return ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: Stack(
@@ -111,6 +119,38 @@ class GameCardFace extends StatelessWidget {
                     ),
                   ),
                 ),
+
+                // Star rarity icons at the top, one per absolute rank.
+                if (starCount > 0)
+                  Align(
+                    alignment: Alignment.topCenter,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        top: starTopPadding,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: List.generate(
+                          starCount,
+                              (index) => Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: starHorizontalPadding,
+                            ),
+                            child: Image.asset(
+                              'assets/rarity_star.png',
+                              width: starSize,
+                              height: starSize,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                // If star asset is missing, fail silently.
+                                return const SizedBox.shrink();
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
 
                 // Optional overlay layer for future UI (e.g. level text).
                 if (overlay != null) overlay!,

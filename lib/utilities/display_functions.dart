@@ -13,6 +13,19 @@ String displayNumber(double value) {
   String suffix = '';
   double scaled = value;
 
+  // NEW: For very small values, show up to 10 decimal places (trim zeros).
+  if (absValue < 1) {
+    String s = value.toStringAsFixed(10);
+
+    // Trim trailing zeros
+    s = s.replaceFirst(RegExp(r'\.?0+$'), '');
+
+    // Edge case: "-0" → "0"
+    if (s == '-0') s = '0';
+
+    return s;
+  }
+
   if (absValue >= 1e12) {
     suffix = 'T';
     scaled = value / 1e12;
@@ -26,9 +39,30 @@ String displayNumber(double value) {
     suffix = 'K';
     scaled = value / 1e3;
   } else {
-    // For small values, just show as integer.
+    // For values between 1 and 999, just show integer.
     return value.toStringAsFixed(0);
   }
 
   return '${scaled.toStringAsFixed(2)}$suffix';
+}
+
+
+String factorialDisplay(double value) {
+  String suffix = '!';
+  double scaled = factorialConversion(value);
+
+  return '${scaled.toStringAsFixed(2)}$suffix';
+}
+
+double factorialConversion(double value) {
+  double num = 0;
+  int divisor = 1;
+  while(value > divisor){
+    value /= divisor;
+    divisor++;
+    num++;
+  }
+
+  num += value / divisor;
+  return num;
 }

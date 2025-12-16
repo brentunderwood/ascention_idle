@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -10,18 +11,21 @@ import 'cards/player_collection_repository.dart';
 import 'cards/game_card_models.dart';
 import 'upgrades_screen.dart';
 import 'rebirth/achievements_catalog.dart';
-import 'misc_tab.dart'; // NEW: misc tab split into its own file
-import 'tutorial_manager.dart'; // NEW: tutorial logic
-import 'utilities/display_functions.dart'; // NEW: numeric display helpers
+import 'misc_tab.dart'; // misc tab split into its own file
+import 'tutorial_manager.dart'; // tutorial logic
+import 'utilities/display_functions.dart'; // numeric display helpers
 
 part 'idle_game_state.dart';
 part 'idle_game_state_accessors.dart';
 
-/// Change this to swap the background later.
+/// Background assets for each game mode.
 const String kGameBackgroundAsset =
     'assets/click_screen_art/gold_mining/background_mine_gold.png';
+const String kAntimatterBackgroundAsset =
+    'assets/click_screen_art/background_antimatter.png';
 
-/// Keys used for local persistence.
+/// Keys used for local persistence (base keys; actual stored keys are
+/// optionally prefixed by the active game mode).
 const String kGoldOreKey = 'gold_ore';
 const String kGoldKey = 'gold';
 const String kTotalGoldOreKey = 'total_gold_ore';
@@ -30,9 +34,19 @@ const String kBaseOrePerClickKey = 'base_ore_per_click';
 const String kLastActiveKey = 'last_active_millis';
 const String kRebirthCountKey = 'rebirth_count';
 const String kTotalRefinedGoldKey = 'total_refined_gold';
-const String kRebirthGoalKey = 'rebirth_goal';
 
-/// This key is used by the NextRunTab in rebirth_screen.dart.
+/// Dark matter: meta resource earned from antimatter mode.
+const String kDarkMatterKey = 'dark_matter';
+
+/// Pending dark matter reward (keeps growing in antimatter mode and is
+/// granted on rebirth).
+const String kPendingDarkMatterKey = 'pending_dark_matter';
+
+/// Active game mode (current run): 'gold' or 'antimatter'.
+const String kActiveGameModeKey = 'active_game_mode';
+
+/// This key is used by the ActivityTab (Next Run tab) in rebirth_screen.dart
+/// to decide what the *next* run's mode should be.
 const String kNextRunSelectedKey = 'next_run_selected_option';
 
 /// Upgrades: map<cardId, count> stored as JSON.
@@ -71,6 +85,12 @@ const String kRandomSpawnChanceKey = 'random_spawn_chance';
 const String kBonusRebirthGoldFromNuggetsKey =
     'bonus_rebirth_gold_from_nuggets';
 
+/// Antimatter-related keys (per-mode).
+const String kAntimatterKey = 'antimatter';
+const String kAntimatterPerSecondKey = 'antimatter_per_second';
+const String kAntimatterPolynomialKey = 'antimatter_polynomial';
+const String kCurrentTicNumberKey = 'current_tic_number';
+
 /// Simple nav item model so you can easily swap icons / labels later.
 class _NavItem {
   final String label;
@@ -106,13 +126,19 @@ Widget buildIdleGameScaffold(
     _IdleGameScreenState state,
     BuildContext context,
     ) {
+  // Pick background based on current game mode.
+  final String backgroundAsset =
+  state._gameMode == 'antimatter'
+      ? kAntimatterBackgroundAsset
+      : kGameBackgroundAsset;
+
   return Scaffold(
     // Transparent so background image shows fully.
     backgroundColor: Colors.transparent,
     body: Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         image: DecorationImage(
-          image: AssetImage(kGameBackgroundAsset),
+          image: AssetImage(backgroundAsset),
           fit: BoxFit.cover,
         ),
       ),
@@ -159,8 +185,12 @@ Widget buildIdleGameScaffold(
   );
 }
 
-/// Top bar switches between Ore stats and Refined Gold
-/// depending on which main tab is selected.
+/// Top bar:
+/// - In Rebirth tab: refined gold.
+/// - In other tabs:
+///   - If gameMode == 'antimatter': show Antimatter + Antimatter/s box
+///     above the usual Gold Ore / Ore per second.
+///   - If gameMode == 'gold': same as before, plus Ore per click line.
 Widget buildTopBar(_IdleGameScreenState state) {
   if (state._currentTabIndex == 2) {
     // Rebirth tab: show refined gold instead of ore stats.
@@ -209,9 +239,10 @@ Widget buildTopBar(_IdleGameScreenState state) {
     );
   }
 
-  // Default: ore/antimatter status for all other tabs
-  final resourceLabel =
-  state._rebirthGoal == 'create_antimatter' ? 'Antimatter' : 'Gold Ore';
+  final bool isAntimatterMode = state._gameMode == 'antimatter';
+
+  // Gold ore label always refers to the per-mode gold ore value.
+  const resourceLabel = 'Gold Ore';
   final orePerClickDisplay = state._currentOrePerClickForDisplay();
 
   // Use centralized ore-per-second formula so this matches game logic.
@@ -225,6 +256,46 @@ Widget buildTopBar(_IdleGameScreenState state) {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        // Antimatter panel (only in antimatter mode)
+        if (isAntimatterMode) ...[
+          Text(
+            // Antimatter amount uses factorialDisplay
+            'Antimatter: ${factorialDisplay(state._antimatter)}',
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Colors.purpleAccent,
+              shadows: [
+                Shadow(
+                  blurRadius: 6,
+                  color: Colors.black,
+                  offset: Offset(2, 2),
+                ),
+              ],
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            // Antimatter per second uses normal number display
+            'Antimatter per second: ${displayNumber(state._antimatterPerSecond)}',
+            style: const TextStyle(
+              fontSize: 16,
+              color: Colors.white,
+              shadows: [
+                Shadow(
+                  blurRadius: 4,
+                  color: Colors.black54,
+                  offset: Offset(1, 1),
+                ),
+              ],
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+        ],
+
+        // Gold Ore / Ore per second (per-mode values)
         Text(
           '$resourceLabel: ${displayNumber(state._goldOre)}',
           style: const TextStyle(
@@ -258,21 +329,24 @@ Widget buildTopBar(_IdleGameScreenState state) {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 4),
-        Text(
-          'Ore per click: ${displayNumber(orePerClickDisplay)}',
-          style: const TextStyle(
-            fontSize: 16,
-            color: Colors.white,
-            shadows: [
-              Shadow(
-                blurRadius: 4,
-                color: Colors.black54,
-                offset: Offset(1, 1),
-              ),
-            ],
+
+        // Ore per click ONLY in gold mode.
+        if (!isAntimatterMode)
+          Text(
+            'Ore per click: ${displayNumber(orePerClickDisplay)}',
+            style: const TextStyle(
+              fontSize: 16,
+              color: Colors.white,
+              shadows: [
+                Shadow(
+                  blurRadius: 4,
+                  color: Colors.black54,
+                  offset: Offset(1, 1),
+                ),
+              ],
+            ),
+            textAlign: TextAlign.center,
           ),
-          textAlign: TextAlign.center,
-        ),
       ],
     ),
   );
@@ -280,7 +354,8 @@ Widget buildTopBar(_IdleGameScreenState state) {
 
 /// Build the Frenzy button (or nothing if the spell isn't unlocked).
 Widget buildFrenzyButton(_IdleGameScreenState state) {
-  if (!state._spellFrenzyActive) {
+  // In antimatter mode, hide Frenzy button (no rock clicking).
+  if (!state._spellFrenzyActive || state._gameMode == 'antimatter') {
     return const SizedBox.shrink();
   }
 
@@ -400,7 +475,6 @@ Widget buildTabContent(_IdleGameScreenState state) {
     case 3:
       return buildStatsTab();
     case 4:
-    // NEW: real misc tab widget with reset support
       return buildMiscTab(state);
     default:
       return const SizedBox.shrink();
@@ -408,8 +482,7 @@ Widget buildTabContent(_IdleGameScreenState state) {
 }
 
 Widget buildMainTab(_IdleGameScreenState state) {
-  final rebirthGold = state._calculateRebirthGold();
-
+  final double rebirthGold = state._calculateRebirthGold();
   final int phase = state._currentClickPhase();
 
   // Image changes with phase: rock_0x.png where x is the phase (1–9).
@@ -417,7 +490,7 @@ Widget buildMainTab(_IdleGameScreenState state) {
       'assets/click_screen_art/gold_mining/rock_0$phase.png';
 
   // Optional phase-9 banner text above the rock.
-  final Widget phaseBanner = phase == 9
+  final Widget phaseBanner = (phase == 9 && state._gameMode == 'gold')
       ? const Padding(
     padding: EdgeInsets.only(bottom: 8.0),
     child: Text(
@@ -439,6 +512,20 @@ Widget buildMainTab(_IdleGameScreenState state) {
   )
       : const SizedBox.shrink();
 
+  final bool isAntimatterMode = state._gameMode == 'antimatter';
+
+  // Decide button label based on current mode.
+  final String rebirthButtonLabel;
+  if (isAntimatterMode) {
+    // Pending dark matter reward is the amount that will be gained on rebirth.
+    final double pendingDarkMatter = state._pendingDarkMatter;
+    rebirthButtonLabel =
+    'Rebirth and gain ${displayNumber(pendingDarkMatter)} dark matter';
+  } else {
+    rebirthButtonLabel =
+    'Rebirth and gain ${rebirthGold.toStringAsFixed(0)} gold';
+  }
+
   // Column fills the available height in the main tab.
   // Content at top, rebirth button pinned to bottom (above nav bar).
   return Column(
@@ -452,45 +539,74 @@ Widget buildMainTab(_IdleGameScreenState state) {
 
             return Stack(
               children: [
-                Align(
-                  // Move the click object slightly higher on the screen.
-                  alignment: const Alignment(0, -0.2),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      phaseBanner,
-                      SizedBox(
-                        width: 440,
-                        height: 440,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onPanDown: state._onRockPanDown,
-                          onPanUpdate: state._onRockPanUpdate,
-                          onPanEnd: state._onRockPanEnd,
-                          onPanCancel: state._onRockPanCancel,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 80),
-                            curve: Curves.easeOut,
-                            transformAlignment: Alignment.center,
-                            transform: Matrix4.identity()
-                              ..setEntry(3, 2, 0.0015) // perspective
-                              ..translate(
-                                  state._rockOffsetX, state._rockOffsetY)
-                              ..scale(state._rockScale)
-                              ..rotateX(state._rockTiltX)
-                              ..rotateY(state._rockTiltY),
-                            child: Image.asset(
-                              rockAssetPath,
-                              fit: BoxFit.contain,
+                if (!isAntimatterMode)
+                  Align(
+                    // Move the click object slightly higher on the screen.
+                    alignment: const Alignment(0, -0.2),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        phaseBanner,
+                        SizedBox(
+                          width: 440,
+                          height: 440,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onPanDown: state._onRockPanDown,
+                            onPanUpdate: state._onRockPanUpdate,
+                            onPanEnd: state._onRockPanEnd,
+                            onPanCancel: state._onRockPanCancel,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 80),
+                              curve: Curves.easeOut,
+                              transformAlignment: Alignment.center,
+                              transform: Matrix4.identity()
+                                ..setEntry(3, 2, 0.0015) // perspective
+                                ..translate(
+                                    state._rockOffsetX, state._rockOffsetY)
+                                ..scale(state._rockScale)
+                                ..rotateX(state._rockTiltX)
+                                ..rotateY(state._rockTiltY),
+                              child: Image.asset(
+                                rockAssetPath,
+                                fit: BoxFit.contain,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      // New Frenzy button below the click object.
-                      buildFrenzyButton(state),
-                    ],
+                        // Frenzy button below the click object in gold mode.
+                        buildFrenzyButton(state),
+                      ],
+                    ),
+                  )
+                else
+                // Antimatter mode main view: no rock, just a flavor text.
+                  Align(
+                    alignment: const Alignment(0, -0.2),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Text(
+                            'Antimatter reactor online.\nProduction scales with time.',
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  blurRadius: 4,
+                                  color: Colors.black54,
+                                  offset: Offset(1, 1),
+                                ),
+                              ],
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
 
                 // Multiple random gold nuggets, each positioned absolutely
                 // so they can cover the whole play area without going off-screen.
@@ -517,9 +633,7 @@ Widget buildMainTab(_IdleGameScreenState state) {
           width: double.infinity,
           child: ElevatedButton(
             onPressed: state._attemptRebirth,
-            child: Text(
-              'Rebirth and gain ${rebirthGold.toStringAsFixed(0)} gold',
-            ),
+            child: Text(rebirthButtonLabel),
           ),
         ),
       ),
@@ -528,8 +642,10 @@ Widget buildMainTab(_IdleGameScreenState state) {
 }
 
 Widget buildUpgradesTab(_IdleGameScreenState state) {
-  final resourceLabel =
-  state._rebirthGoal == 'create_antimatter' ? 'Antimatter' : 'Gold Ore';
+  // The displayed label for the current resource. In antimatter mode we still
+  // call it "Gold Ore" here, but the underlying numbers are per-mode and
+  // saved separately.
+  const resourceLabel = 'Gold Ore';
 
   return UpgradesScreen(
     currentResource: state._goldOre,
@@ -580,9 +696,7 @@ Widget buildStatsTab() {
   );
 }
 
-/// New: real misc tab with a reset button.
-/// The reset callback lives here (has access to state & navigation),
-/// while the UI is in misc_tab.dart.
+/// Misc tab with a reset button.
 Widget buildMiscTab(_IdleGameScreenState state) {
   return MiscTab(
     onResetGame: () async {

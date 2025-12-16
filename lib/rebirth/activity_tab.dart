@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Definition model for a "Next Run" option.
+/// Definition model for a "Next Run" game mode option.
 class _ActivityOption {
-  final String id;
+  final String id; // 'gold' or 'antimatter'
   final String name;
   final String description;
   final IconData icon;
@@ -37,14 +37,15 @@ class ActivityTab extends StatefulWidget {
 class _ActivityTabState extends State<ActivityTab> {
   static const List<_ActivityOption> _options = [
     _ActivityOption(
-      id: 'mine_gold',
+      id: 'gold',
       name: 'Mine gold',
-      description: 'Focus this run on generating as much gold ore as possible.',
+      description:
+      'Focus this run on generating as much gold ore as possible.',
       icon: Icons.attach_money,
       lockedByDefault: false,
     ),
     _ActivityOption(
-      id: 'create_antimatter',
+      id: 'antimatter',
       name: 'Create antimatter',
       description:
       'Convert your efforts into antimatter instead of gold for advanced progression.',
@@ -71,7 +72,14 @@ class _ActivityTabState extends State<ActivityTab> {
     // Load unlock states
     for (final opt in _options) {
       final key = _unlockKey(opt.id);
-      final stored = prefs.getBool(key);
+      bool? stored = prefs.getBool(key);
+
+      // Backwards compatibility for antimatter unlock:
+      // old key: 'next_run_create_antimatter_unlocked'
+      if (stored == null && opt.id == 'antimatter') {
+        stored = prefs.getBool('next_run_create_antimatter_unlocked');
+      }
+
       if (stored != null) {
         _unlocked[opt.id] = stored;
       } else {
@@ -79,13 +87,28 @@ class _ActivityTabState extends State<ActivityTab> {
       }
     }
 
-    // Load selected option (default to mine_gold if none)
+    // Load selected option.
+    //
+    // Backwards compatibility:
+    //   'mine_gold'         -> 'gold'
+    //   'create_antimatter' -> 'antimatter'
     final storedSelected = prefs.getString(_selectedKey);
-    if (storedSelected != null && _options.any((o) => o.id == storedSelected)) {
-      _selectedId = storedSelected;
+    String resolvedSelected;
+    if (storedSelected == 'mine_gold') {
+      resolvedSelected = 'gold';
+    } else if (storedSelected == 'create_antimatter') {
+      resolvedSelected = 'antimatter';
+    } else if (storedSelected != null &&
+        _options.any((o) => o.id == storedSelected)) {
+      resolvedSelected = storedSelected;
     } else {
-      _selectedId = 'mine_gold';
+      resolvedSelected = 'gold';
     }
+
+    _selectedId = resolvedSelected;
+
+    // Persist back in normalized form.
+    await prefs.setString(_selectedKey, resolvedSelected);
 
     setState(() {
       _loaded = true;
@@ -98,7 +121,7 @@ class _ActivityTabState extends State<ActivityTab> {
     if (!_isUnlocked(option.id)) return;
 
     setState(() {
-      _selectedId = option.id;
+      _selectedId = option.id; // 'gold' or 'antimatter'
     });
 
     final prefs = await SharedPreferences.getInstance();
@@ -112,18 +135,23 @@ class _ActivityTabState extends State<ActivityTab> {
   Future<void> _unlockOption(_ActivityOption option) async {
     if (_isUnlocked(option.id)) return;
     if (widget.currentGold < option.unlockCost) {
-      // Not enough gold; feedback via snackbar handled in button.
       return;
     }
 
     setState(() {
       _unlocked[option.id] = true;
-      // If nothing selected yet, select this one.
       _selectedId ??= option.id;
     });
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_unlockKey(option.id), true);
+    final key = _unlockKey(option.id);
+    await prefs.setBool(key, true);
+
+    // Also write the old antimatter key for backwards compatibility if needed.
+    if (option.id == 'antimatter') {
+      await prefs.setBool('next_run_create_antimatter_unlocked', true);
+    }
+
     await prefs.setString(_selectedKey, _selectedId!);
 
     // Spend refined gold via callback
@@ -176,7 +204,8 @@ class _ActivityTabState extends State<ActivityTab> {
                           children: [
                             // Icon
                             Padding(
-                              padding: const EdgeInsets.only(right: 8.0),
+                              padding:
+                              const EdgeInsets.only(right: 8.0),
                               child: Icon(
                                 opt.icon,
                                 size: 32,
@@ -191,7 +220,8 @@ class _ActivityTabState extends State<ActivityTab> {
                             // Title + description
                             Expanded(
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                                crossAxisAlignment:
+                                CrossAxisAlignment.start,
                                 children: [
                                   Text(
                                     opt.name,
@@ -212,7 +242,7 @@ class _ActivityTabState extends State<ActivityTab> {
                                   const SizedBox(height: 4),
                                   if (isSelected && unlocked)
                                     Text(
-                                      'Selected',
+                                      'Selected game mode: ${opt.id}',
                                       style: TextStyle(
                                         fontSize: 12,
                                         color: Colors.greenAccent
@@ -264,7 +294,8 @@ class _ActivityTabState extends State<ActivityTab> {
                           child: Container(
                             decoration: BoxDecoration(
                               color: Colors.black.withOpacity(0.80),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius:
+                              BorderRadius.circular(12),
                             ),
                             child: Center(
                               child: Column(
@@ -287,8 +318,10 @@ class _ActivityTabState extends State<ActivityTab> {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(
                                           const SnackBar(
-                                            content: Text('Not enough gold'),
-                                            duration: Duration(seconds: 2),
+                                            content: Text(
+                                                'Not enough gold'),
+                                            duration:
+                                            Duration(seconds: 2),
                                           ),
                                         );
                                       }

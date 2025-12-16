@@ -262,13 +262,30 @@ class CardCatalog {
       packId: 'vita_orum',
       backgroundAsset: 'assets/vita_orum/card_base_vita_orum.png',
       artAsset: 'assets/vita_orum/rank_3/lv_1_inertia.png',
-      shortDescription: '',
+      shortDescription: 'It\'s all downhill from here.',
       longDescription:
       'Each click is slightly more powerful than the last. Multiplier to click power is capped at [level]',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         target.setMomentumCap(cardLevel.toDouble());
         final currentScale = target.getMomentumScale();
         target.setMomentumScale(currentScale + upgradesThisRun / 1000);
+      },
+    ),
+
+    'vita_orum_4': GameCard(
+      id: 'vita_orum_4',
+      name: 'Rusty Patina',
+      rank: 4,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'vita_orum',
+      backgroundAsset: 'assets/vita_orum/card_base_vita_orum.png',
+      artAsset: 'assets/vita_orum/rank_4/lv_1_rusty_patina.png',
+      shortDescription: 'Makes your pickaxe...better?',
+      longDescription:
+      'Each click counts as root([upgrade count]x[level]) clicks instead',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setClickMultiplicity(math.pow(cardLevel*upgradesThisRun, 0.5).toDouble());
       },
     ),
 
@@ -296,6 +313,23 @@ class CardCatalog {
         target.setFrenzyCooldownFraction(
           10 * math.pow(0.9, cardLevel - 1).toDouble(),
         );
+      },
+    ),
+
+    'vita_orum_6': GameCard(
+      id: 'vita_orum_6',
+      name: 'Loose Dirt',
+      rank: 6,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'vita_orum',
+      backgroundAsset: 'assets/vita_orum/card_base_vita_orum.png',
+      artAsset: 'assets/vita_orum/rank_6/lv_1_loose_dirt.png',
+      shortDescription: 'Just keeps falling back into the hole.',
+      longDescription:
+      'Every click reduces gold per second and increases gold per click by [level]',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setOrePerSecondTransfer(target.getOrePerSecondTransfer() + cardLevel);
       },
     ),
 
@@ -356,18 +390,242 @@ class CardCatalog {
     //Chronon Epoch
     'chrono_epoch_1': GameCard(
       id: 'chrono_epoch_1',
-      name: 'One Small Step',
+      name: 'Skipped Beat',
       rank: 1,
       baseLevel: 1,
       evolutionLevel: 1,
       packId: 'chrono_epoch',
       backgroundAsset: 'assets/chrono_epoch/card_base_chrono_epoch.png',
-      artAsset: 'assets/chrono_epoch/rank_1/lv_1_one_small_step.png',
+      artAsset: 'assets/chrono_epoch/rank_1/lv_1_skipped_beat.png',
+      shortDescription: 'feels like a heart attack',
+      longDescription:
+      'Fast forward [number purchased] minutes into the future.',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.simulateOfflineSeconds(60*upgradesThisRun);
+      },
+    ),
+
+    'chrono_epoch_2': GameCard(
+      id: 'chrono_epoch_2',
+      name: 'One Small Step',
+      rank: 2,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'chrono_epoch',
+      backgroundAsset: 'assets/chrono_epoch/card_base_chrono_epoch.png',
+      artAsset: 'assets/chrono_epoch/rank_2/lv_1_one_small_step.png',
       shortDescription: 'Because even a regular sized step is too hard',
       longDescription:
       'On your next rebirth, add a multipier to resource generation based on how many of this card you have and the amount of gold you have earned this run',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         target.setRebirthMultiplier(upgradesThisRun.toDouble());
+      },
+    ),
+
+    //Stygian Void
+    'stygian_void_1': GameCard(
+      id: 'stygian_void_1',
+      name: 'Quark',
+      rank: 1,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_1/lv_1_quark.png',
+      shortDescription: 'the smallest of the subatomic particles',
+      longDescription:
+      'Generates 1 antimatter each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(0, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_2': GameCard(
+      id: 'stygian_void_2',
+      name: 'Quantum String',
+      rank: 2,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_2/lv_1_quantum_string.png',
+      shortDescription: 'String that makes up the fabric of the universe',
+      longDescription:
+      'Generates 1 quark each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(1, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_3': GameCard(
+      id: 'stygian_void_3',
+      name: 'Particle Collision',
+      rank: 3,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_3/lv_1_particle_collision.png',
+      shortDescription: 'Make stuff go really fast',
+      longDescription:
+      'Generates 1 quantum string each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(2, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_4': GameCard(
+      id: 'stygian_void_4',
+      name: 'Mysterious Object',
+      rank: 4,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_4/lv_1_mysterious_object.png',
+      shortDescription: '...where did it come from',
+      longDescription:
+      'Generates 1 particle collision each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(3, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_5': GameCard(
+      id: 'stygian_void_5',
+      name: 'Gravitational Pull',
+      rank: 5,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_5/lv_1_gravitational_pull.png',
+      shortDescription: 'I feel heavy',
+      longDescription:
+      'Generates 1 mysterious object each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(4, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_6': GameCard(
+      id: 'stygian_void_6',
+      name: 'Radioactive Decay',
+      rank: 6,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_6/lv_1_radioactive_decay.png',
+      shortDescription: 'Gives you superpowers. Or cancer. 50/50',
+      longDescription:
+      'Generates 1 gravitational pull each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(5, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_7': GameCard(
+      id: 'stygian_void_7',
+      name: 'Dense Matter',
+      rank: 7,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_7/lv_1_dense_matter.png',
+      shortDescription: 'This is some heavy stuff',
+      longDescription:
+      'Generates 1 radioactive decay each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(6, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_8': GameCard(
+      id: 'stygian_void_8',
+      name: 'Stardust',
+      rank: 8,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_8/lv_1_stardust.png',
+      shortDescription: 'My god, it\'s full of stars',
+      longDescription:
+      'Generates 1 dense matter each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(7, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_9': GameCard(
+      id: 'stygian_void_9',
+      name: 'Primordial Soup',
+      rank: 9,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_9/lv_1_primordial_soup.png',
+      shortDescription: 'Way better than Campbell\'s',
+      longDescription:
+      'Generates 1 stardust each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(8, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_10': GameCard(
+      id: 'stygian_void_10',
+      name: 'Cosmic Egg',
+      rank: 10,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/rank_10/lv_1_cosmic_egg.png',
+      shortDescription: 'There\'s a whole universe of life in here.',
+      longDescription:
+      'Generates 1 primordial soup each second. If you hatch it, something amazing will happen.',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.updateAntimatterPolynomialScalars(9, upgradesThisRun);
+      },
+    ),
+
+    'stygian_void_unique': GameCard(
+      id: 'stygian_void_unique',
+      name: 'The All-Consuming Darkness',
+      rank: -1,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'stygian_void',
+      backgroundAsset: 'assets/stygian_void/card_base_stygian_void.png',
+      artAsset: 'assets/stygian_void/unique/lv_1_all_consuming_darkness.png',
+      shortDescription: 'Surrender to the sweet embrace of oblivion',
+      longDescription:
+      'This card can replace all other stygian void cards. First upgrade is equivalent to rank 1. Doubling the upgrade count is equivalent to buying the next level stygian void card.',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        //first pass
+        int pow = (math.log(upgradesThisRun) / math.log(2)).floor();
+        List<int> scales = [];
+        for(int i=0;i<pow;i++){
+          scales.add(math.pow(2,pow-1-i).toInt());
+        }
+
+        //iterate until complete
+        int remaining = (upgradesThisRun - math.pow(2,pow)).toInt();
+        while(remaining > 0){
+          pow = (math.log(remaining) / math.log(2)).floor();
+          for(int i=0;i<pow;i++){
+            scales[i] += (math.pow(2,pow-1-i).toInt());
+          }
+        }
+
+        //update scalars
+        for(int i=0;i<scales.length;i++){
+          target.updateAntimatterPolynomialScalars(i, scales[i]);
+        }
       },
     ),
   };

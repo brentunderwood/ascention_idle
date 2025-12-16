@@ -12,19 +12,20 @@ import 'cards/player_collection_repository.dart';
 import 'cards/info_dialog.dart';
 import 'utilities/display_functions.dart';
 
-/// Deck persistence keys (same string values as in deck_management_tab.dart).
+/// Deck persistence keys (same base string values as in deck_management_tab.dart).
 const String _deckSlotCountKey = 'rebirth_deck_slot_count';
 const String _decksDataKey = 'rebirth_decks_data';
 const String _activeDeckIndexKey = 'rebirth_active_deck_index';
 
 /// Upgrades: map<cardId, count> stored as JSON.
 /// This matches kCardUpgradeCountsKey in idle_game_screen.dart.
+/// NOTE: We store these **per mode** by prefixing with 'antimatter_' when needed.
 const String kCardUpgradeCountsKey = 'card_upgrade_counts';
 
 /// Snapshot of which cards (and at what level) are upgradeable this run.
 /// This is written at rebirth time and remains fixed until the next rebirth.
-/// NOTE: We now treat the snapshot as the frozen set of card IDs.
-///       Card level is taken from the live collection when building rows.
+/// NOTE: We now treat the snapshot as the frozen set of card IDs,
+///       and store it **per mode** using the same prefix convention.
 const String kUpgradeDeckSnapshotKey = 'rebirth_upgrade_deck_snapshot';
 
 class UpgradesScreen extends StatefulWidget {
@@ -54,11 +55,40 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
 
   bool _loading = true;
 
-  /// cardId -> number of upgrades purchased this run.
+  /// Current game mode: 'gold' or 'antimatter'.
+  String _gameMode = 'gold';
+
+  /// SharedPreferences key for the active game mode.
+  /// Must match the key used in IdleGameScreen.
+  static const String _activeGameModeKey = 'active_game_mode';
+
+  /// cardId -> number of upgrades purchased this run (per mode).
   Map<String, int> _upgradeCounts = {};
 
   /// One entry per upgrade row.
   List<_UpgradeRowData> _rows = [];
+
+  /// Helper to add per-mode prefix to keys:
+  ///  - gold: baseKey as-is
+  ///  - antimatter: 'antimatter_<baseKey>'
+  String _modeKey(String baseKey, String gameMode) {
+    if (gameMode == 'antimatter') {
+      return 'antimatter_$baseKey';
+    }
+    return baseKey;
+  }
+
+  /// Resolve current game mode from prefs.
+  String _resolveCurrentGameMode(SharedPreferences prefs) {
+    final storedMode = prefs.getString(_activeGameModeKey);
+
+    if (storedMode == 'mine_gold') return 'gold';
+    if (storedMode == 'create_antimatter') return 'antimatter';
+    if (storedMode == 'gold' || storedMode == 'antimatter') {
+      return storedMode!;
+    }
+    return 'gold';
+  }
 
   @override
   void initState() {
@@ -68,9 +98,15 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
 
   Future<void> _loadData() async {
     _prefs ??= await SharedPreferences.getInstance();
+    final prefs = _prefs!;
 
-    // 1) Load upgrade counts.
-    final countsJson = _prefs!.getString(kCardUpgradeCountsKey);
+    // Determine the current game mode so we can read the right deck data
+    // and the right per-mode upgrade data.
+    _gameMode = _resolveCurrentGameMode(prefs);
+    String mk(String baseKey) => _modeKey(baseKey, _gameMode);
+
+    // 1) Load upgrade counts (per run, PER MODE).
+    final countsJson = prefs.getString(mk(kCardUpgradeCountsKey));
     Map<String, int> counts = {};
     if (countsJson != null && countsJson.isNotEmpty) {
       try {
@@ -89,7 +125,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       }
     }
 
-    // 2) Try to build rows from the frozen snapshot first.
+    // 2) Try to build rows from the frozen snapshot first (PER MODE).
     final rowsFromSnapshot =
     await _buildRowsFromSnapshotIfAvailable(counts: counts);
 
@@ -102,9 +138,9 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       return;
     }
 
-    // 3) If no valid snapshot exists (e.g. first run),
+    // 3) If no valid snapshot exists (e.g. first run for this mode),
     //    derive from the current active deck + collection
-    //    and create the snapshot now.
+    //    and create the snapshot now (PER MODE).
     final rowsFromLive =
     await _buildRowsFromCurrentDeckAndCreateSnapshot(counts: counts);
 
@@ -124,7 +160,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     };
   }
 
-  /// Attempts to build upgrade rows from the frozen snapshot.
+  /// Attempts to build upgrade rows from the frozen snapshot (PER MODE).
   /// Returns null or empty list if snapshot is missing/invalid.
   ///
   /// IMPORTANT: We only use the snapshot to fix the *set of cards*.
@@ -133,7 +169,10 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   Future<List<_UpgradeRowData>?> _buildRowsFromSnapshotIfAvailable({
     required Map<String, int> counts,
   }) async {
-    final snapshotJson = _prefs!.getString(kUpgradeDeckSnapshotKey);
+    final prefs = _prefs!;
+    String mk(String baseKey) => _modeKey(baseKey, _gameMode);
+
+    final snapshotJson = prefs.getString(mk(kUpgradeDeckSnapshotKey));
     if (snapshotJson == null || snapshotJson.isEmpty) {
       return null;
     }
@@ -188,13 +227,19 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   ///
   /// We still freeze the *card IDs*, but the level is always derived from
   /// the live collection on subsequent loads.
+  ///
+  /// This is done PER MODE, using per-mode deck prefs and snapshot keys.
   Future<List<_UpgradeRowData>> _buildRowsFromCurrentDeckAndCreateSnapshot({
     required Map<String, int> counts,
   }) async {
-    // --- Active deck from deck prefs ---
-    final deckSlotCount = _prefs!.getInt(_deckSlotCountKey) ?? 1;
-    final activeDeckIndexZero = _prefs!.getInt(_activeDeckIndexKey) ?? 0;
-    final decksJson = _prefs!.getString(_decksDataKey);
+    final prefs = _prefs!;
+    final mode = _gameMode;
+    String mk(String baseKey) => _modeKey(baseKey, mode);
+
+    // --- Active deck from per-mode deck prefs ---
+    final deckSlotCount = prefs.getInt(mk(_deckSlotCountKey)) ?? 1;
+    final activeDeckIndexZero = prefs.getInt(mk(_activeDeckIndexKey)) ?? 0;
+    final decksJson = prefs.getString(mk(_decksDataKey));
 
     List<_DeckData> decks = [];
 
@@ -239,7 +284,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       }
     }
 
-    // --- Load player collection from PlayerCollectionRepository ---
+    // --- Load player collection from PlayerCollectionRepository (GLOBAL) ---
     final ownedById = await _loadOwnedById();
 
     // --- Build rows + snapshot list (card IDs only are truly "frozen") ---
@@ -266,17 +311,22 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       });
     }
 
-    // Persist snapshot so future loads use this frozen list of IDs.
-    await _prefs!
-        .setString(kUpgradeDeckSnapshotKey, jsonEncode(snapshotList));
+    // Persist snapshot so future loads use this frozen list of IDs (PER MODE).
+    await prefs.setString(
+      mk(kUpgradeDeckSnapshotKey),
+      jsonEncode(snapshotList),
+    );
 
     return rows;
   }
 
   Future<void> _saveUpgradeCounts() async {
     _prefs ??= await SharedPreferences.getInstance();
+    final prefs = _prefs!;
+    String mk(String baseKey) => _modeKey(baseKey, _gameMode);
+
     final mapToSave = _upgradeCounts.map((key, value) => MapEntry(key, value));
-    await _prefs!.setString(kCardUpgradeCountsKey, jsonEncode(mapToSave));
+    await prefs.setString(mk(kCardUpgradeCountsKey), jsonEncode(mapToSave));
   }
 
   /// Computes the next upgrade cost for a given card, using the
@@ -429,7 +479,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      card.shortDescription, // <-- use short description now
+                      card.shortDescription, // <-- short description
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -483,8 +533,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
-                      color:
-                      canAfford ? Colors.amber : Colors.grey, // dim cost color
+                      color: canAfford ? Colors.amber : Colors.grey,
                     ),
                   ),
                 ],

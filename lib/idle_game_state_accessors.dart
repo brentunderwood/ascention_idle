@@ -8,8 +8,6 @@ implements IdleGameEffectTarget {
   // private fields and helper methods. All names below refer to members
   // declared in _IdleGameScreenState in idle_game_state.dart.
 
-  // ===== IdleGameEffectTarget implementation & related helpers =====
-
   @override
   List<OwnedCard> getAllOwnedCards() {
     return PlayerCollectionRepository.instance.allOwnedCards;
@@ -53,7 +51,6 @@ implements IdleGameEffectTarget {
 
   @override
   double getBaseOrePerClick() {
-    // "Base click" value used for Reciprocity – 1 + core per-click bonus.
     return 1.0 + _this._baseOrePerClick;
   }
 
@@ -114,13 +111,11 @@ implements IdleGameEffectTarget {
     _this._goldOre += amount;
     _this._totalGoldOre += amount;
 
-    // Tutorial: ore changed due to some card effect.
     TutorialManager.instance
         .onGoldOreChanged(context, _this._manualClickCount.toDouble());
   }
 
   /// Sets base ore per click (before phase & multipliers).
-  /// Incoming value is the "base click" (1 + stored bonus).
   @override
   void setBaseOrePerClick(double value) {
     _this._baseOrePerClick = value - 1.0;
@@ -169,11 +164,9 @@ implements IdleGameEffectTarget {
 
   // ===== Multipliers API (getters / setters) =====
 
-  /// Getter for the rebirth multiplier (applies to *next* rebirth).
   @override
   double getRebirthMultiplier() => _this._rebirthMultiplier;
 
-  /// Setter for the rebirth multiplier.
   @override
   void setRebirthMultiplier(double value) {
     _this.setState(() {
@@ -182,10 +175,8 @@ implements IdleGameEffectTarget {
     _this._saveProgress();
   }
 
-  /// Getter for the overall multiplier (applies to this run).
   double getOverallMultiplier() => _this._overallMultiplier;
 
-  /// Setter for the overall multiplier. Clamped to at least 1.
   void setOverallMultiplier(double value) {
     _this.setState(() {
       _this._overallMultiplier = math.max(1.0, value);
@@ -194,7 +185,6 @@ implements IdleGameEffectTarget {
     _this._saveProgress();
   }
 
-  /// Optional helpers for achievements / UI if you need them later.
   double getAchievementMultiplier() => _this._achievementMultiplier;
 
   void addAchievementMultiplier(double delta) {
@@ -249,6 +239,17 @@ implements IdleGameEffectTarget {
     _this._saveProgress();
   }
 
+  // ===== NEW: Ore/sec -> Ore/click transfer API =====
+
+  double getOrePerSecondTransfer() => _this._orePerSecondTransfer;
+
+  void setOrePerSecondTransfer(double value) {
+    _this.setState(() {
+      _this._orePerSecondTransfer = value;
+    });
+    _this._saveProgress();
+  }
+
   // ===== Random spawn chance API =====
 
   double getRandomSpawnChance() => _this._randomSpawnChance;
@@ -263,25 +264,36 @@ implements IdleGameEffectTarget {
 
   // ===== Tracked click / cycle / card-count stats API =====
 
-  /// Manual click cycles this rebirth (derived from the current manual click count).
   double getManualClickCycles() => _this._manualClickCyclesThisRun;
 
-  /// Total manual click cycles across all time (sum over completed rebirths).
   double getTotalManualClickCycles() => _this._totalManualClickCycles;
 
-  /// Physical rock presses this run (does not include click multipliers).
   int getClicksThisRun() => _this._clicksThisRun;
 
-  /// Physical rock presses across all time (does not include multipliers).
   int getTotalClicks() => _this._totalClicks;
 
-  /// Highest per-card upgrade count ever reached (all time).
   int getMaxCardCount() => _this._maxCardCount;
 
+  // Optional helpers you might want later:
+  String getGameMode() => _this._gameMode;
+
+  double getAntimatter() => _this._antimatter;
+
+  double getAntimatterPerSecond() => _this._antimatterPerSecond;
+
+  int getCurrentTicNumber() => _this._currentTicNumber;
+
+  /// Expose polynomial update if you want to call it from card effects later.
+  void setAntimatterPolynomialCoeff(int degree, int coeff) {
+    _this.updateAntimatterPolynomialScalars(degree, coeff);
+  }
+
+  @override
+  void simulateOfflineSeconds(int seconds) {
+    _this._applyOfflineProgress(secondsOverride: seconds);
+  }
+
   // ===== Internal helper to access the concrete state instance =====
-  //
-  // Because this mixin is declared "on State<IdleGameScreen>" but is only
-  // actually used by _IdleGameScreenState, this cast is safe within this
-  // library (and lets us access the private fields).
+
   _IdleGameScreenState get _this => this as _IdleGameScreenState;
 }

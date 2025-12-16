@@ -35,37 +35,46 @@ class DeckManagementTab extends StatefulWidget {
 }
 
 class _DeckManagementTabState extends State<DeckManagementTab> {
+  // Base keys (un-prefixed). These will be wrapped in a per-mode prefix.
   static const String _deckSlotCountKey = 'rebirth_deck_slot_count';
   static const String _deckSelectedViewKey = 'rebirth_deck_selected_view';
 
   // Deck data persistence
   static const String _decksDataKey = 'rebirth_decks_data';
 
-  // Player-wide deck constraints
+  // Player-wide deck constraints (GLOBAL, shared across modes).
   static const String _maxCardsKey = 'rebirth_deck_max_cards';
   static const String _maxCapacityKey = 'rebirth_deck_max_capacity';
 
   // Active deck for next rebirth (zero-based index)
   static const String _activeDeckIndexKey = 'rebirth_active_deck_index';
 
+  /// SharedPreferences key for the active game mode.
+  /// Must match the key used in IdleGameScreen.
+  static const String _activeGameModeKey = 'active_game_mode';
+
   int _deckSlotCount = 1; // starts with 1 deck by default
   String _selectedViewId = 'collection';
   bool _loaded = false;
+
+  /// Current game mode: 'gold' or 'antimatter'.
+  String _gameMode = 'gold';
 
   /// Drawer starts CLOSED whenever this tab is opened.
   bool _drawerOpen = false;
 
   /// Player-wide constraints (can be increased later by achievements).
+  /// These are GLOBAL, shared across modes.
   int _maxCards = 1;
   int _maxCapacity = 1;
 
-  /// All decks (one per slot).
+  /// All decks (one per slot) for the *current game mode*.
   List<_DeckData> _decks = [];
 
-  /// Index of the deck used for next rebirth (0-based).
+  /// Index of the deck used for next rebirth (0-based) for the current mode.
   int _activeDeckIndexZero = 0;
 
-  /// Player collection (all owned cards).
+  /// Player collection (all owned cards). SHARED across modes.
   List<OwnedCard> _collection = [];
 
   @override
@@ -74,23 +83,52 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     _loadDeckPrefsAndCollection();
   }
 
+  /// Map a base key to a per-mode key:
+  ///  - gold mode: returns baseKey as-is (backwards compatible).
+  ///  - antimatter: returns 'antimatter_<baseKey>'.
+  String _modeKey(String baseKey, String gameMode) {
+    if (gameMode == 'antimatter') {
+      return 'antimatter_$baseKey';
+    }
+    return baseKey;
+  }
+
+  /// Resolve the current game mode from SharedPreferences.
+  /// Handles older string values like 'mine_gold' / 'create_antimatter'.
+  String _resolveCurrentGameMode(SharedPreferences prefs) {
+    final storedMode = prefs.getString(_activeGameModeKey);
+
+    if (storedMode == 'mine_gold') return 'gold';
+    if (storedMode == 'create_antimatter') return 'antimatter';
+    if (storedMode == 'gold' || storedMode == 'antimatter') {
+      return storedMode!;
+    }
+    return 'gold';
+  }
+
   Future<void> _loadDeckPrefsAndCollection() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final storedCount = prefs.getInt(_deckSlotCountKey);
-    final storedView = prefs.getString(_deckSelectedViewKey);
+    // Determine which mode we are in so we can scope deck data.
+    final mode = _resolveCurrentGameMode(prefs);
+    _gameMode = mode;
+    String mk(String baseKey) => _modeKey(baseKey, mode);
 
+    final storedCount = prefs.getInt(mk(_deckSlotCountKey));
+    final storedView = prefs.getString(mk(_deckSelectedViewKey));
+
+    // GLOBAL constraints (shared across all modes).
     final storedMaxCards = prefs.getInt(_maxCardsKey);
     final storedMaxCapacity = prefs.getInt(_maxCapacityKey);
 
-    final storedActiveDeckIndex = prefs.getInt(_activeDeckIndexKey);
+    final storedActiveDeckIndex = prefs.getInt(mk(_activeDeckIndexKey));
 
-    // ---------- LOAD PLAYER COLLECTION VIA REPOSITORY ----------
+    // ---------- LOAD PLAYER COLLECTION VIA REPOSITORY (GLOBAL) ----------
     await PlayerCollectionRepository.instance.init();
     final collection = PlayerCollectionRepository.instance.allOwnedCards;
 
-    // ---------- LOAD DECKS JSON ----------
-    final rawDecks = prefs.getString(_decksDataKey);
+    // ---------- LOAD DECKS JSON (PER-MODE) ----------
+    final rawDecks = prefs.getString(mk(_decksDataKey));
     List<_DeckData> decks = [];
     if (rawDecks != null && rawDecks.isNotEmpty) {
       try {
@@ -120,7 +158,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       _collection = collection;
       _decks = decks;
 
-      // Respect stored max cards / capacity
+      // Respect stored max cards / capacity (GLOBAL).
       _maxCards = (storedMaxCards != null && storedMaxCards >= 1)
           ? storedMaxCards
           : 1;
@@ -162,16 +200,21 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
   Future<void> _saveDeckPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_deckSlotCountKey, _deckSlotCount);
-    await prefs.setString(_deckSelectedViewKey, _selectedViewId);
+    final mode = _gameMode;
+    String mk(String baseKey) => _modeKey(baseKey, mode);
 
+    // Per-mode deck data.
+    await prefs.setInt(mk(_deckSlotCountKey), _deckSlotCount);
+    await prefs.setString(mk(_deckSelectedViewKey), _selectedViewId);
+    await prefs.setInt(mk(_activeDeckIndexKey), _activeDeckIndexZero);
+
+    // GLOBAL constraints (shared across modes).
     await prefs.setInt(_maxCardsKey, _maxCards);
     await prefs.setInt(_maxCapacityKey, _maxCapacity);
-    await prefs.setInt(_activeDeckIndexKey, _activeDeckIndexZero);
 
     final encodedDecks =
     jsonEncode(_decks.map((d) => d.toJson()).toList(growable: false));
-    await prefs.setString(_decksDataKey, encodedDecks);
+    await prefs.setString(mk(_decksDataKey), encodedDecks);
   }
 
   bool get _showingCollection => _selectedViewId == 'collection';
@@ -252,6 +295,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     });
     await _saveDeckPrefs();
 
+    // NOTE: Spending gold is still GLOBAL.
     widget.onSpendGold(cost);
   }
 
@@ -355,7 +399,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       return;
     }
 
-    // 2) Check max cards
+    // 2) Check max cards (GLOBAL limit)
     if (deck.cardIds.length >= _maxCards) {
       await _showSimpleInfoDialog(
         'Cannot add card',
@@ -373,7 +417,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       }
     }
     final int cardRarity = card.rank;
-    final int newValue = deckValue + math.pow(cardRarity,2).toInt();
+    final int newValue = deckValue + math.pow(cardRarity, 2).toInt();
 
     if (newValue > _maxCapacity) {
       await _showSimpleInfoDialog(

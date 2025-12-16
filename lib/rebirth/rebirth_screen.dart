@@ -75,7 +75,7 @@ class _RebirthScreenState extends State<RebirthScreen>
             Tab(text: 'Store'),
             Tab(text: 'Deck'),
             Tab(text: 'Achievements'),
-            Tab(text: 'Next Run'),
+            Tab(text: 'Mode'),
           ],
         ),
         Expanded(
