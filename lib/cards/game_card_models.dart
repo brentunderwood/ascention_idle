@@ -46,7 +46,7 @@ abstract class IdleGameEffectTarget {
   void setClickMultiplicity(double amount);
   void updateAntimatterPolynomialScalars(int degree, int coefficient);
   void simulateOfflineSeconds(int seconds);
-  void setOrePerSecondTransfer(double amount)
+  void setOrePerSecondTransfer(double amount);
 }
 
 /// Signature for a card effect function.
