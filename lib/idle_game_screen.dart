@@ -1,3 +1,6 @@
+// ==================================
+// idle_game_screen.dart (FULL FILE)
+// ==================================
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -12,6 +15,7 @@ import 'cards/game_card_models.dart';
 import 'upgrades_screen.dart';
 import 'rebirth/achievements_catalog.dart';
 import 'misc_tab.dart'; // misc tab split into its own file
+import 'stats/stats_tab.dart'; // ✅ Stats reads from SharedPreferences now
 import 'tutorial_manager.dart'; // tutorial logic
 import 'utilities/display_functions.dart'; // numeric display helpers
 
@@ -127,8 +131,7 @@ Widget buildIdleGameScaffold(
     BuildContext context,
     ) {
   // Pick background based on current game mode.
-  final String backgroundAsset =
-  state._gameMode == 'antimatter'
+  final String backgroundAsset = state._gameMode == 'antimatter'
       ? kAntimatterBackgroundAsset
       : kGameBackgroundAsset;
 
@@ -259,7 +262,6 @@ Widget buildTopBar(_IdleGameScreenState state) {
         // Antimatter panel (only in antimatter mode)
         if (isAntimatterMode) ...[
           Text(
-            // Antimatter amount uses factorialDisplay
             'Antimatter: ${factorialDisplay(state._antimatter)}',
             style: const TextStyle(
               fontSize: 22,
@@ -277,7 +279,6 @@ Widget buildTopBar(_IdleGameScreenState state) {
           ),
           const SizedBox(height: 4),
           Text(
-            // Antimatter per second uses normal number display
             'Antimatter per second: ${displayNumber(state._antimatterPerSecond)}',
             style: const TextStyle(
               fontSize: 16,
@@ -473,7 +474,8 @@ Widget buildTabContent(_IdleGameScreenState state) {
     case 2:
       return buildRebirthTab(state);
     case 3:
-      return buildStatsTab();
+    // ✅ Stats now reads from SharedPreferences (gold + antimatter) directly.
+      return const StatsTab();
     case 4:
       return buildMiscTab(state);
     default:
@@ -562,8 +564,7 @@ Widget buildMainTab(_IdleGameScreenState state) {
                               transformAlignment: Alignment.center,
                               transform: Matrix4.identity()
                                 ..setEntry(3, 2, 0.0015) // perspective
-                                ..translate(
-                                    state._rockOffsetX, state._rockOffsetY)
+                                ..translate(state._rockOffsetX, state._rockOffsetY)
                                 ..scale(state._rockScale)
                                 ..rotateX(state._rockTiltX)
                                 ..rotateY(state._rockTiltY),
@@ -673,26 +674,6 @@ Widget buildRebirthTab(_IdleGameScreenState state) {
       state._saveProgress();
     },
     achievementMultiplier: state.getAchievementMultiplier(),
-  );
-}
-
-Widget buildStatsTab() {
-  return const Center(
-    child: Text(
-      'Stats coming soon...',
-      style: TextStyle(
-        fontSize: 18,
-        color: Colors.white,
-        shadows: [
-          Shadow(
-            blurRadius: 4,
-            color: Colors.black54,
-            offset: Offset(1, 1),
-          ),
-        ],
-      ),
-      textAlign: TextAlign.center,
-    ),
   );
 }
 

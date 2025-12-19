@@ -1,5 +1,19 @@
+import 'package:ascention_idle/cards/player_collection_repository.dart';
+
 import 'game_card_models.dart';
 import 'dart:math' as math;
+
+
+int upgradesById(IdleGameEffectTarget target, String card_id){
+  final activeDeck = target.getActiveDeck();
+  int upgrades = 0;
+  for(ActiveDeckCard card in activeDeck){
+    if(card.card.id == card_id){
+      upgrades = card.upgradesThisRun;
+    }
+  }
+  return upgrades;
+}
 
 /// Central registry of all card templates in the game.
 ///
@@ -233,6 +247,9 @@ class CardCatalog {
       cardEffect: (target, cardLevel, upgradesThisRun) {
         final delta = math.pow(cardLevel, 2).toDouble();
         target.setBaseOrePerClick(target.getBaseOrePerClick() + delta);
+
+        int upgrades = upgradesById(target, 'vita_orum_8');
+        target.setManualClickPower(target.getManualClickPower() + upgrades);
       },
     ),
 
@@ -250,6 +267,9 @@ class CardCatalog {
       'Allows you to blow through those rocks a little faster to get to that sweet, sweet nugg. Scales based on level and count.',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         target.setManualClickPower(target.getManualClickPower() + cardLevel);
+
+        int upgrades = upgradesById(target, 'vita_orum_8');
+        target.setManualClickPower(target.getManualClickPower() + upgrades);
       },
     ),
 
@@ -264,11 +284,14 @@ class CardCatalog {
       artAsset: 'assets/vita_orum/rank_3/lv_1_inertia.png',
       shortDescription: 'It\'s all downhill from here.',
       longDescription:
-      'Each click is slightly more powerful than the last. Multiplier to click power is capped at [level]',
+      'Each click is slightly more powerful than the last. Multiplier to click power is capped at [level] * root([upgrade count])',
       cardEffect: (target, cardLevel, upgradesThisRun) {
-        target.setMomentumCap(cardLevel.toDouble());
+        target.setMomentumCap(cardLevel.toDouble() * math.pow(upgradesThisRun, 0.5));
         final currentScale = target.getMomentumScale();
         target.setMomentumScale(currentScale + upgradesThisRun / 1000);
+
+        int upgrades = upgradesById(target, 'vita_orum_8');
+        target.setManualClickPower(target.getManualClickPower() + upgrades);
       },
     ),
 
@@ -286,6 +309,9 @@ class CardCatalog {
       'Each click counts as root([upgrade count]x[level]) clicks instead',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         target.setClickMultiplicity(math.pow(cardLevel*upgradesThisRun, 0.5).toDouble());
+
+        int upgrades = upgradesById(target, 'vita_orum_8');
+        target.setManualClickPower(target.getManualClickPower() + upgrades);
       },
     ),
 
@@ -313,6 +339,9 @@ class CardCatalog {
         target.setFrenzyCooldownFraction(
           10 * math.pow(0.9, cardLevel - 1).toDouble(),
         );
+
+        int upgrades = upgradesById(target, 'vita_orum_8');
+        target.setManualClickPower(target.getManualClickPower() + upgrades);
       },
     ),
 
@@ -330,6 +359,9 @@ class CardCatalog {
       'Every click reduces gold per second and increases gold per click by [level]',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         target.setOrePerSecondTransfer(target.getOrePerSecondTransfer() + cardLevel);
+
+        int upgrades = upgradesById(target, 'vita_orum_8');
+        target.setManualClickPower(target.getManualClickPower() + upgrades);
       },
     ),
 
@@ -350,6 +382,50 @@ class CardCatalog {
         target.setGpsClickCoeff(target.getGpsClickCoeff() + cardLevel / 10000);
 
         target.setBaseClickOpsCoeff(target.getBaseClickOpsCoeff() + 0.01);
+
+        int upgrades = upgradesById(target, 'vita_orum_8');
+        target.setManualClickPower(target.getManualClickPower() + upgrades);
+      },
+    ),
+
+    'vita_orum_8': GameCard(
+      id: 'vita_orum_8',
+      name: 'Soot and Ash',
+      rank: 8,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'vita_orum',
+      backgroundAsset: 'assets/vita_orum/card_base_vita_orum.png',
+      artAsset: 'assets/vita_orum/rank_8/lv_1_soot_and_ash.png',
+      shortDescription: 'How is this supposed to help?',
+      longDescription:
+      'Increase rock destroying power by 1 for each Vita Orum upgrade you own',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        final activeDeck = target.getActiveDeck();
+        int total_upgrades = 0;
+        for(ActiveDeckCard card in activeDeck){
+          total_upgrades += card.upgradesThisRun;
+        }
+        int l3_upgrades = upgradesById(target, 'vita_orum_3');
+
+        target.setManualClickPower(l3_upgrades + total_upgrades * upgradesThisRun);
+      },
+    ),
+
+    'vita_orum_9': GameCard(
+      id: 'vita_orum_9',
+      name: 'Tap, Tap, Tap',
+      rank: 9,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'vita_orum',
+      backgroundAsset: 'assets/vita_orum/card_base_vita_orum.png',
+      artAsset: 'assets/vita_orum/rank_9/lv_1_tap_tap_tap.png',
+      shortDescription: 'This may take a while',
+      longDescription:
+      'Save up click power during inactivity. Power of next click is equal to [count] * root(seconds inactive)',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setIdleBoost(target.getIdleBoost() + 1);
       },
     ),
 
@@ -416,9 +492,77 @@ class CardCatalog {
       artAsset: 'assets/chrono_epoch/rank_2/lv_1_one_small_step.png',
       shortDescription: 'Because even a regular sized step is too hard',
       longDescription:
-      'On your next rebirth, add a multipier to resource generation based on how many of this card you have and the amount of gold you have earned this run',
+      'On your next rebirth, add a multipier to resource generation based on how many of this card you have',
       cardEffect: (target, cardLevel, upgradesThisRun) {
         target.setRebirthMultiplier(upgradesThisRun.toDouble());
+      },
+    ),
+
+    'chrono_epoch_3': GameCard(
+      id: 'chrono_epoch_3',
+      name: 'Spark of Will',
+      rank: 3,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'chrono_epoch',
+      backgroundAsset: 'assets/chrono_epoch/card_base_chrono_epoch.png',
+      artAsset: 'assets/chrono_epoch/rank_3/lv_1_spark_of_will.png',
+      shortDescription: 'That belongs to Will, not you',
+      longDescription:
+      'Increases ore per click multiplier by root([upgrade count])/1M each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setClickAging(math.pow(upgradesThisRun, 0.5) / 1000000);
+      },
+    ),
+
+    'chrono_epoch_4': GameCard(
+      id: 'chrono_epoch_4',
+      name: 'Fast Forward',
+      rank: 4,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'chrono_epoch',
+      backgroundAsset: 'assets/chrono_epoch/card_base_chrono_epoch.png',
+      artAsset: 'assets/chrono_epoch/rank_4/lv_1_fast_forward.png',
+      shortDescription: 'Please remember to rewind',
+      longDescription:
+      'Multiplies the rate of time progression by root([upgrade count])',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setTicsPerSecond(math.pow(upgradesThisRun, 0.5).floor());
+      },
+    ),
+
+    'chrono_epoch_5': GameCard(
+      id: 'chrono_epoch_5',
+      name: 'Spark of Thought',
+      rank: 5,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'chrono_epoch',
+      backgroundAsset: 'assets/chrono_epoch/card_base_chrono_epoch.png',
+      artAsset: 'assets/chrono_epoch/rank_5/lv_1_spark_of_thought.png',
+      shortDescription: 'Not much going on behind those eyes, is there',
+      longDescription:
+      'Increases ore per second multiplier by root([upgrade count])/1M each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setRpsAging(math.pow(upgradesThisRun, 0.5) / 1000000);
+      },
+    ),
+
+    'chrono_epoch_7': GameCard(
+      id: 'chrono_epoch_7',
+      name: 'Spark of Thought',
+      rank: 7,
+      baseLevel: 1,
+      evolutionLevel: 1,
+      packId: 'chrono_epoch',
+      backgroundAsset: 'assets/chrono_epoch/card_base_chrono_epoch.png',
+      artAsset: 'assets/chrono_epoch/rank_7/lv_1_spark_of_industry.png',
+      shortDescription: 'A future reader of Ayn Rand',
+      longDescription:
+      'Grants refined gold every second. Amount gained increases by root([upgrade count])/1B each second',
+      cardEffect: (target, cardLevel, upgradesThisRun) {
+        target.setGpsAging(math.pow(upgradesThisRun, 0.5) / math.pow(10,9));
       },
     ),
 

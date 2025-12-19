@@ -96,8 +96,7 @@ CardDrawResult _drawCardForPack({
 
   // --- Step 3: Experience multiplier ----------------------------------------
   // exp_multiplier = 10 ^ floor((card_rank - 1) / 10)
-  final int expMultiplier =
-  math.pow(10, (cardRank - 1) ~/ 10).toInt();
+  final int expMultiplier = math.pow(10, (cardRank - 1) ~/ 10).toInt();
 
   // --- Step 4: Find a card with that rank, with "step-down" fallback --------
   List<GameCard> rankMatches = nonUniqueCards
@@ -170,8 +169,7 @@ class _RebirthStoreTabState extends State<RebirthStoreTab> {
     CardPackConfig(
       id: 'stygian_void',
       name: 'Stygian Void',
-      packImageAsset:
-      'assets/stygian_void/card_pack_stygian_void.png',
+      packImageAsset: 'assets/stygian_void/card_pack_stygian_void.png',
     ),
   ];
 
@@ -291,7 +289,7 @@ class _RebirthStoreTabState extends State<RebirthStoreTab> {
 /// - Left/right arrows to change level (0–X+1)
 /// - Cost (10^level)
 /// - Buy button (random card from pack)
-/// - Info button below
+/// - Info button below (includes rarity chances for ranks 1..10)
 class RebirthPackTile extends StatefulWidget {
   final CardPackConfig config;
   final double currentGold;
@@ -312,6 +310,10 @@ class RebirthPackTile extends StatefulWidget {
 
 class _RebirthPackTileState extends State<RebirthPackTile> {
   static const int _minLevel = 0;
+
+  // Monte Carlo samples for the rarity % shown in the Info dialog.
+  // Keep this modest so the dialog feels instant.
+  static const int _rarityChanceSamples = 20000;
 
   int _currentLevel = _minLevel;
 
@@ -396,6 +398,49 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
       default:
         return 'A mysterious pack containing unknown cards.';
     }
+  }
+
+  /// Estimates the chance (%) of drawing each rarity rank (1..10) at the current level,
+  /// using the *same* `_drawCardForPack` selection logic (including fallback behavior).
+  Future<Map<int, double>> _estimateRarityChances() async {
+    final cards = CardCatalog.instance.getCardsForPack(widget.config.id);
+    if (cards.isEmpty) {
+      return <int, double>{};
+    }
+
+    // Use a fixed seed so the UI is stable (no flicker between opens).
+    final rng = math.Random(1337);
+
+    final Map<int, int> counts = <int, int>{};
+    int n = 0;
+
+    for (int i = 0; i < _rarityChanceSamples; i++) {
+      final res = _drawCardForPack(
+        cards: cards,
+        packId: widget.config.id,
+        packLevel: _currentLevel,
+        rng: rng,
+      );
+      final int r = res.card.rank;
+      if (r >= 1 && r <= 10) {
+        counts[r] = (counts[r] ?? 0) + 1;
+      }
+      n++;
+    }
+
+    final Map<int, double> pct = <int, double>{};
+    if (n <= 0) return pct;
+
+    for (int r = 1; r <= 10; r++) {
+      final c = counts[r] ?? 0;
+      pct[r] = (c / n) * 100.0;
+    }
+    return pct;
+  }
+
+  String _formatPct(double? v) {
+    if (v == null) return '—';
+    return '${v.toStringAsFixed(1)}%';
   }
 
   Future<void> _onBuyPressed(BuildContext context) async {
@@ -757,25 +802,81 @@ class _RebirthPackTileState extends State<RebirthPackTile> {
 
             const SizedBox(height: 12),
 
-            // Info button
+            // Info button (now includes rarity chances for ranks 1..10)
             Align(
               alignment: Alignment.center,
               child: TextButton.icon(
                 onPressed: () {
                   showDialog<void>(
                     context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: Text(widget.config.name),
-                      content: Text(
-                        _infoDescription,
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(),
-                          child: const Text('OK'),
-                        ),
-                      ],
-                    ),
+                    builder: (ctx) {
+                      return FutureBuilder<Map<int, double>>(
+                        future: _estimateRarityChances(),
+                        builder: (context, snap) {
+                          Widget content;
+
+                          if (snap.connectionState != ConnectionState.done) {
+                            content = Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                SizedBox(height: 8),
+                                CircularProgressIndicator(),
+                                SizedBox(height: 12),
+                                Text('Calculating rarity chances...'),
+                              ],
+                            );
+                          } else {
+                            final pct = snap.data ?? <int, double>{};
+
+                            final List<Widget> lines = [
+                              Text(_infoDescription),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Estimated draw chances (Level $_currentLevel):',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                            ];
+
+                            for (int r = 1; r <= 10; r++) {
+                              lines.add(Text(
+                                'Rarity $r: ${_formatPct(pct[r])}',
+                              ));
+                            }
+
+                            lines.add(const SizedBox(height: 8));
+                            lines.add(
+                              Text(
+                                '(Based on $_rarityChanceSamples simulated draws)',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            );
+
+                            content = Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: lines,
+                            );
+                          }
+
+                          return AlertDialog(
+                            title: Text(widget.config.name),
+                            content: content,
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(),
+                                child: const Text('OK'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
                   );
                 },
                 icon: const Icon(Icons.info_outline),

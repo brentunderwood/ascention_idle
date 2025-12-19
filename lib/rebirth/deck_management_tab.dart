@@ -7,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../cards/game_card_models.dart';
 import '../cards/card_catalog.dart';
 import '../cards/game_card_face.dart';
-import '../cards/card_effects.dart';
 import '../cards/info_dialog.dart';
 import '../cards/player_collection_repository.dart';
 import '../tutorial_manager.dart';
@@ -236,7 +235,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   void _selectDeck(int index) {
     setState(() {
       _selectedViewId = 'deck_${index + 1}';
-      // Close drawer after navigation selection.
       _drawerOpen = false;
     });
     _saveDeckPrefs();
@@ -245,7 +243,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   void _selectCollection() {
     setState(() {
       _selectedViewId = 'collection';
-      // Close drawer after navigation selection.
       _drawerOpen = false;
     });
     _saveDeckPrefs();
@@ -288,9 +285,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     setState(() {
       _deckSlotCount += 1;
       _selectedViewId = 'deck_$_deckSlotCount';
-      // Ensure deck list has a new deck entry.
       _decks = _ensureDeckListForSlotCount(_decks, _deckSlotCount);
-      // Close drawer after unlocking and selecting the new deck.
       _drawerOpen = false;
     });
     await _saveDeckPrefs();
@@ -301,7 +296,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
   Future<void> _showAddDeckSlotDialog() async {
     if (_deckSlotCount >= 10) {
-      // Max reached; simple info dialog
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -321,7 +315,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     final cost = _deckSlotCost();
 
     if (widget.currentGold < cost) {
-      // Insufficient funds dialog with only "Insufficient funds" button
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -340,7 +333,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       return;
     }
 
-    // Confirmation dialog (yes/no)
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -390,7 +382,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     final deck = _getOrCreateDeckByIndexZero(deckIndexZero);
     final deckNumber = deckIndexZero + 1;
 
-    // 1) Check duplicate
     if (deck.cardIds.contains(card.id)) {
       await _showSimpleInfoDialog(
         'Cannot add card',
@@ -399,7 +390,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       return;
     }
 
-    // 2) Check max cards (GLOBAL limit)
     if (deck.cardIds.length >= _maxCards) {
       await _showSimpleInfoDialog(
         'Cannot add card',
@@ -408,7 +398,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       return;
     }
 
-    // 3) Check capacity by rarity (using rank^2 as value)
     int deckValue = 0;
     for (final id in deck.cardIds) {
       final c = CardCatalog.getById(id);
@@ -416,6 +405,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         deckValue += math.pow(c.rank.abs(), 2).toInt();
       }
     }
+
     final int cardRarity = card.rank;
     final int newValue = deckValue + math.pow(cardRarity, 2).toInt();
 
@@ -428,7 +418,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       return;
     }
 
-    // Passed all checks -> add
     setState(() {
       deck.cardIds.add(card.id);
     });
@@ -441,7 +430,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       ),
     );
 
-    // Tutorial: card successfully added to deck.
     TutorialManager.instance.onCardAddedToDeck(context);
   }
 
@@ -558,7 +546,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       );
     }
 
-    // Build tiles for each owned card: card art + name + level/exp.
     final items = _collection.map((owned) {
       final card = CardCatalog.getById(owned.cardId);
       if (card == null) return null;
@@ -582,7 +569,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       );
     }
 
-    // Sort by pack (using manual pack order), then by rank ascending.
     items.sort((a, b) {
       int indexFor(String packId) {
         final idx = kPackDisplayOrder.indexOf(packId);
@@ -596,7 +582,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         return aPackIndex.compareTo(bPackIndex);
       }
 
-      // Same pack -> sort by rank ascending.
       return a.card.rank.compareTo(b.card.rank);
     });
 
@@ -671,13 +656,10 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     );
   }
 
-  /// Builds the deck view for a specific deck (index is 1-based for display).
-  /// Uses a ReorderableListView so the player can drag to re-order cards.
   Widget _buildDeckView(int deckIndex) {
     final indexZero = deckIndex - 1;
     final deck = _getOrCreateDeckByIndexZero(indexZero);
 
-    // Compute deck value (sum of ranks^2).
     int deckValue = 0;
     for (final id in deck.cardIds) {
       final c = CardCatalog.getById(id);
@@ -686,7 +668,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       }
     }
 
-    // Map of owned cards by ID for quick lookup
     final Map<String, OwnedCard> ownedById = {
       for (final oc in _collection) oc.cardId: oc,
     };
@@ -704,7 +685,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         ),
       );
     } else {
-      // Reorderable list of cards in the deck, in current deck order.
       body = ReorderableListView.builder(
         padding: const EdgeInsets.all(8.0),
         itemCount: deck.cardIds.length,
@@ -724,7 +704,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
           final owned = ownedById[id];
 
           if (card == null || owned == null) {
-            // Keep a placeholder so indexes stay consistent.
             return ListTile(
               key: ValueKey('missing_$id'),
               title: const Text(
@@ -746,11 +725,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
     final isActive = (_activeDeckIndexZero == indexZero);
 
-    // Wrap header + stats row + list in a Column
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Deck name + edit + active selector
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
           child: Row(
@@ -788,8 +765,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
             ],
           ),
         ),
-
-        // Stats row
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
           child: Row(
@@ -821,7 +796,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     );
   }
 
-  /// Single reorderable deck row: card face, name, level, drag handle, etc.
   Widget _buildReorderableDeckItem({
     required Key key,
     required GameCard card,
@@ -898,7 +872,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
   Widget _buildMainArea() {
     if (_showingCollection) {
-      // Collection view: scrollable grid of owned cards
       return Container(
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.25),
@@ -907,7 +880,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         child: _buildCollectionView(),
       );
     } else {
-      // Some deck is selected
       final deckIndex =
           int.tryParse(_selectedViewId.replaceFirst('deck_', '')) ?? 1;
 
@@ -934,7 +906,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         padding: const EdgeInsets.all(12.0),
         child: Column(
           children: [
-            // Top row with drawer toggle + title
             Row(
               children: [
                 IconButton(
@@ -969,13 +940,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
               ],
             ),
             const SizedBox(height: 8),
-
-            // Main area: content with an overlayed drawer
             Expanded(
               child: Stack(
                 children: [
-                  // Main content always fills the area.
-                  // Also acts as a "click outside to close drawer".
                   Positioned.fill(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
@@ -989,8 +956,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
                       child: _buildMainArea(),
                     ),
                   ),
-
-                  // Drawer overlays on top instead of resizing the content
                   if (_drawerOpen)
                     Positioned(
                       top: 0,
@@ -1071,7 +1036,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     return Container(
       width: 200,
       decoration: BoxDecoration(
-        // Less transparent / almost opaque drawer
         color: Colors.black.withOpacity(0.95),
         borderRadius: BorderRadius.circular(8),
       ),
@@ -1081,28 +1045,21 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
         children: [
           Text('Deck', style: deckLabelStyle),
           const SizedBox(height: 8),
-
-          // Scrollable drawer list: Deck 1..N, +New, Collection
           Expanded(
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  // --- Deck 1..N ---
                   for (int i = 0; i < _deckSlotCount; i++)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2.0),
                       child: _buildDeckTile(
-                        label: _decks.length > i
-                            ? _decks[i].name
-                            : 'Deck ${i + 1}',
+                        label: _decks.length > i ? _decks[i].name : 'Deck ${i + 1}',
                         selected: _selectedViewId == 'deck_${i + 1}',
                         isActive: _activeDeckIndexZero == i,
                         icon: Icons.layers,
                         onTap: () => _selectDeck(i),
                       ),
                     ),
-
-                  // --- "+ New" tile always BELOW the last deck ---
                   if (_deckSlotCount < 10)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2.0),
@@ -1114,10 +1071,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
                         onTap: _showAddDeckSlotDialog,
                       ),
                     ),
-
                   const SizedBox(height: 12),
-
-                  // Collection label + tile
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text('Collection', style: sideHeaderStyle),
@@ -1169,7 +1123,6 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   }
 }
 
-/// Simple helper model to bundle a card template with its owned info.
 class _OwnedCardDisplayData {
   final GameCard card;
   final OwnedCard owned;
@@ -1180,7 +1133,6 @@ class _OwnedCardDisplayData {
   });
 }
 
-/// Internal deck data: ID + name + list of card IDs in that deck.
 class _DeckData {
   final String id;
   String name;

@@ -12,11 +12,6 @@ import 'cards/player_collection_repository.dart';
 import 'cards/info_dialog.dart';
 import 'utilities/display_functions.dart';
 
-/// Deck persistence keys (same base string values as in deck_management_tab.dart).
-const String _deckSlotCountKey = 'rebirth_deck_slot_count';
-const String _decksDataKey = 'rebirth_decks_data';
-const String _activeDeckIndexKey = 'rebirth_active_deck_index';
-
 /// Upgrades: map<cardId, count> stored as JSON.
 /// This matches kCardUpgradeCountsKey in idle_game_screen.dart.
 /// NOTE: We store these **per mode** by prefixing with 'antimatter_' when needed.
@@ -52,7 +47,6 @@ class UpgradesScreen extends StatefulWidget {
 
 class _UpgradesScreenState extends State<UpgradesScreen> {
   SharedPreferences? _prefs;
-
   bool _loading = true;
 
   /// Current game mode: 'gold' or 'antimatter'.
@@ -72,9 +66,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   ///  - gold: baseKey as-is
   ///  - antimatter: 'antimatter_<baseKey>'
   String _modeKey(String baseKey, String gameMode) {
-    if (gameMode == 'antimatter') {
-      return 'antimatter_$baseKey';
-    }
+    if (gameMode == 'antimatter') return 'antimatter_$baseKey';
     return baseKey;
   }
 
@@ -100,8 +92,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     _prefs ??= await SharedPreferences.getInstance();
     final prefs = _prefs!;
 
-    // Determine the current game mode so we can read the right deck data
-    // and the right per-mode upgrade data.
     _gameMode = _resolveCurrentGameMode(prefs);
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
 
@@ -138,8 +128,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       return;
     }
 
-    // 3) If no valid snapshot exists (e.g. first run for this mode),
-    //    derive from the current active deck + collection
+    // 3) If no valid snapshot exists, derive from the current active deck + collection
     //    and create the snapshot now (PER MODE).
     final rowsFromLive =
     await _buildRowsFromCurrentDeckAndCreateSnapshot(counts: counts);
@@ -155,9 +144,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   Future<Map<String, OwnedCard>> _loadOwnedById() async {
     final repo = PlayerCollectionRepository.instance;
     await repo.init();
-    return {
-      for (final oc in repo.allOwnedCards) oc.cardId: oc,
-    };
+    return {for (final oc in repo.allOwnedCards) oc.cardId: oc};
   }
 
   /// Attempts to build upgrade rows from the frozen snapshot (PER MODE).
@@ -173,16 +160,15 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
 
     final snapshotJson = prefs.getString(mk(kUpgradeDeckSnapshotKey));
-    if (snapshotJson == null || snapshotJson.isEmpty) {
-      return null;
-    }
+    if (snapshotJson == null || snapshotJson.isEmpty) return null;
 
     final ownedById = await _loadOwnedById();
 
     try {
-      final decoded = jsonDecode(snapshotJson) as List<dynamic>;
-      final List<_UpgradeRowData> rows = [];
+      final decoded = jsonDecode(snapshotJson);
+      if (decoded is! List) return null;
 
+      final List<_UpgradeRowData> rows = [];
       for (final entry in decoded) {
         if (entry is! Map<String, dynamic>) continue;
         final cardId = entry['cardId']?.toString();
@@ -191,8 +177,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
         final card = CardCatalog.getById(cardId);
         if (card == null) continue;
 
-        // Snapshot may contain a 'level' field from older runs; treat it
-        // only as a fallback. Prefer current OwnedCard.level.
+        // Snapshot may contain a 'level' field from older runs; fallback only.
         final snapshotLevelRaw = entry['level'];
         int snapshotLevel = 1;
         if (snapshotLevelRaw is int) {
@@ -206,6 +191,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
             owned?.level ?? snapshotLevel.clamp(1, 9999) ?? card.baseLevel;
 
         final ownedCount = counts[cardId] ?? 0;
+
         rows.add(
           _UpgradeRowData(
             card: card,
@@ -222,13 +208,8 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     }
   }
 
-  /// Reads the *current* active deck & collection (like DeckManagementTab),
-  /// builds the upgrade rows, and writes a frozen snapshot for future runs.
-  ///
-  /// We still freeze the *card IDs*, but the level is always derived from
-  /// the live collection on subsequent loads.
-  ///
-  /// This is done PER MODE, using per-mode deck prefs and snapshot keys.
+  /// Reads the *current* active deck & collection, builds rows, and writes snapshot.
+  /// This is done PER MODE.
   Future<List<_UpgradeRowData>> _buildRowsFromCurrentDeckAndCreateSnapshot({
     required Map<String, int> counts,
   }) async {
@@ -236,58 +217,15 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     final mode = _gameMode;
     String mk(String baseKey) => _modeKey(baseKey, mode);
 
-    // --- Active deck from per-mode deck prefs ---
-    final deckSlotCount = prefs.getInt(mk(_deckSlotCountKey)) ?? 1;
-    final activeDeckIndexZero = prefs.getInt(mk(_activeDeckIndexKey)) ?? 0;
-    final decksJson = prefs.getString(mk(_decksDataKey));
+    // Resolve active deck cards via repository (per-mode deck prefs).
+    final activeCards =
+    await PlayerCollectionRepository.instance.getCurrentActiveDeckCards(
+      prefs: prefs,
+      gameMode: mode,
+    );
 
-    List<_DeckData> decks = [];
-
-    if (decksJson != null && decksJson.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(decksJson);
-        if (decoded is List) {
-          decks = decoded
-              .whereType<Map<String, dynamic>>()
-              .map((m) => _DeckData.fromJson(m))
-              .toList();
-        }
-      } catch (_) {
-        decks = [];
-      }
-    }
-
-    // Ensure list has at least deckSlotCount entries so we always have a deck_N.
-    while (decks.length < deckSlotCount) {
-      final index = decks.length;
-      decks.add(
-        _DeckData(
-          id: 'deck_${index + 1}',
-          name: 'Deck ${index + 1}',
-          cardIds: const [],
-        ),
-      );
-    }
-
-    int idx = activeDeckIndexZero;
-    if (idx < 0 || idx >= decks.length) {
-      idx = 0;
-    }
-    final activeDeck = decks[idx];
-
-    // --- Resolve cards in the active deck ---
-    final List<GameCard> activeCards = [];
-    for (final cardId in activeDeck.cardIds) {
-      final card = CardCatalog.getById(cardId);
-      if (card != null) {
-        activeCards.add(card);
-      }
-    }
-
-    // --- Load player collection from PlayerCollectionRepository (GLOBAL) ---
     final ownedById = await _loadOwnedById();
 
-    // --- Build rows + snapshot list (card IDs only are truly "frozen") ---
     final rows = <_UpgradeRowData>[];
     final snapshotList = <Map<String, dynamic>>[];
 
@@ -311,12 +249,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       });
     }
 
-    // Persist snapshot so future loads use this frozen list of IDs (PER MODE).
-    await prefs.setString(
-      mk(kUpgradeDeckSnapshotKey),
-      jsonEncode(snapshotList),
-    );
-
+    await prefs.setString(mk(kUpgradeDeckSnapshotKey), jsonEncode(snapshotList));
     return rows;
   }
 
@@ -325,21 +258,17 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     final prefs = _prefs!;
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
 
-    final mapToSave = _upgradeCounts.map((key, value) => MapEntry(key, value));
+    final mapToSave = _upgradeCounts.map((k, v) => MapEntry(k, v));
     await prefs.setString(mk(kCardUpgradeCountsKey), jsonEncode(mapToSave));
   }
 
-  /// Computes the next upgrade cost for a given card, using the
-  /// *player's* card level (not the catalog baseLevel).
-  ///
   /// cost = baseCost(rank, cardLevel) * [costScalingFactor(cardLevel)]^ownedCount
   double _computeNextCost({
     required GameCard card,
     required int cardLevel,
     required int ownedCount,
   }) {
-    final double baseCost =
-    CardEffects.baseCost(rank: card.rank, level: cardLevel);
+    final double baseCost = CardEffects.baseCost(rank: card.rank, level: cardLevel);
     final double scaling = CardEffects.costScalingFactor(level: cardLevel);
     return baseCost * math.pow(scaling, ownedCount);
   }
@@ -348,6 +277,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     final card = row.card;
     final cardLevel = row.cardLevel;
     final currentCount = _upgradeCounts[card.id] ?? row.ownedCount;
+
     final cost = _computeNextCost(
       card: card,
       cardLevel: cardLevel,
@@ -366,7 +296,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       return;
     }
 
-    // Spend the resource in the parent (IdleGameScreen).
     widget.onSpendResource(cost);
 
     final newCount = currentCount + 1;
@@ -389,7 +318,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
 
     await _saveUpgradeCounts();
 
-    // Notify IdleGameScreen so it can apply the actual effect.
     widget.onCardUpgradeEffect(card, cardLevel, newCount);
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -403,20 +331,16 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     final card = row.card;
     final ownedCount = row.ownedCount;
     final cardLevel = row.cardLevel;
+
     final cost = _computeNextCost(
       card: card,
       cardLevel: cardLevel,
       ownedCount: ownedCount,
     );
 
-    // Can the player afford this upgrade?
     final bool canAfford = widget.currentResource >= cost;
-
-    // Use shared display notation (e.g. 1.2K, 3.4M, etc.)
     final costText = displayNumber(cost);
 
-    // If somehow the card isn't in the collection yet, synthesize an OwnedCard
-    // so the info dialog still has something to show.
     final effectiveOwned = row.owned ??
         OwnedCard(
           cardId: card.id,
@@ -425,7 +349,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
         );
 
     return Opacity(
-      opacity: canAfford ? 1.0 : 0.4, // gray out when unaffordable
+      opacity: canAfford ? 1.0 : 0.4,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handlePurchase(row),
@@ -441,7 +365,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Card image (match Rebirth Store / deck usage).
               SizedBox(
                 width: 70,
                 height: 100,
@@ -455,8 +378,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-
-              // Name + short description + level
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -479,7 +400,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      card.shortDescription, // <-- short description
+                      card.shortDescription,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -499,8 +420,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-
-              // Owned + Cost
               Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -539,8 +458,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
                 ],
               ),
               const SizedBox(width: 4),
-
-              // Info button (shared dialog)
               IconButton(
                 icon: const Icon(
                   Icons.info_outline,
@@ -562,9 +479,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_rows.isEmpty) {
@@ -596,45 +511,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   }
 }
 
-/// Minimal deck data model to read deck JSON from SharedPreferences.
-/// This matches the structure written by DeckManagementTab.
-class _DeckData {
-  final String id;
-  String name;
-  final List<String> cardIds;
-
-  _DeckData({
-    required this.id,
-    required this.name,
-    required this.cardIds,
-  });
-
-  factory _DeckData.fromJson(Map<String, dynamic> json) {
-    final cardsRaw = json['cards'];
-    final List<String> ids;
-    if (cardsRaw is List) {
-      ids = cardsRaw.map((e) => e.toString()).toList();
-    } else {
-      ids = const [];
-    }
-
-    return _DeckData(
-      id: json['id']?.toString() ?? 'deck_1',
-      name: json['name']?.toString() ?? 'Deck 1',
-      cardIds: ids,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'cards': cardIds,
-    };
-  }
-}
-
-/// Simple holder for row data.
 class _UpgradeRowData {
   final GameCard card;
   final int ownedCount;

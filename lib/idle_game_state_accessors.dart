@@ -4,13 +4,16 @@ part of 'idle_game_screen.dart';
 /// plus other small getter/setter helpers, so the main state file stays cleaner.
 mixin IdleGameEffectTargetMixin on State<IdleGameScreen>
 implements IdleGameEffectTarget {
-  // We assume we are mixed into _IdleGameScreenState and have access to its
-  // private fields and helper methods. All names below refer to members
-  // declared in _IdleGameScreenState in idle_game_state.dart.
-
   @override
   List<OwnedCard> getAllOwnedCards() {
     return PlayerCollectionRepository.instance.allOwnedCards;
+  }
+
+  @override
+  List<ActiveDeckCard> getActiveDeck() {
+    return PlayerCollectionRepository.instance.getActiveUpgradeDeckSync(
+      gameMode: getGameMode(),
+    );
   }
 
   @override
@@ -28,7 +31,6 @@ implements IdleGameEffectTarget {
     return (_this._totalRefinedGold);
   }
 
-  /// Returns the *effective* ore per second using the centralized formula.
   @override
   double getOrePerSecond() {
     return _this._computeOrePerSecond();
@@ -93,19 +95,16 @@ implements IdleGameEffectTarget {
     _this._manualClickPower = value;
   }
 
-  /// Applies a *base* ore/s value; effective OPS is computed via _computeOrePerSecond.
   @override
   void setOrePerSecond(double value) {
     _this._orePerSecond = value;
   }
 
-  /// Set bonus ore per second (applied before multipliers).
   @override
   void setBonusOrePerSecond(double value) {
     _this._bonusOrePerSecond = value;
   }
 
-  /// Applies an instant ore gain.
   @override
   void addOre(double amount) {
     _this._goldOre += amount;
@@ -115,14 +114,12 @@ implements IdleGameEffectTarget {
         .onGoldOreChanged(context, _this._manualClickCount.toDouble());
   }
 
-  /// Sets base ore per click (before phase & multipliers).
   @override
   void setBaseOrePerClick(double value) {
     _this._baseOrePerClick = value - 1.0;
     _this._updatePreviewPerClick();
   }
 
-  /// Sets bonus ore per click (applied before multipliers).
   @override
   void setBonusOrePerClick(double value) {
     _this._bonusOrePerClick = value;
@@ -150,19 +147,15 @@ implements IdleGameEffectTarget {
         _this._spellFrenzyDurationSeconds * amount;
   }
 
-  /// Set the momentum cap (overwrites existing value).
   @override
   void setMomentumCap(double amount) {
     _this._momentumCap = amount;
   }
 
-  /// Set the momentum scale.
   @override
   void setMomentumScale(double value) {
     _this._momentumScale = value;
   }
-
-  // ===== Multipliers API (getters / setters) =====
 
   @override
   double getRebirthMultiplier() => _this._rebirthMultiplier;
@@ -196,8 +189,6 @@ implements IdleGameEffectTarget {
 
   double getMaxGoldMultiplier() => _this._maxGoldMultiplier;
 
-  // ===== Ore-per-click coefficient API =====
-
   double getGpsClickCoeff() => _this._gpsClickCoeff;
 
   void setGpsClickCoeff(double value) {
@@ -228,8 +219,6 @@ implements IdleGameEffectTarget {
     _this._saveProgress();
   }
 
-  // ===== Ore-per-second coefficient API =====
-
   double getBaseClickOpsCoeff() => _this._baseClickOpsCoeff;
 
   void setBaseClickOpsCoeff(double value) {
@@ -238,8 +227,6 @@ implements IdleGameEffectTarget {
     });
     _this._saveProgress();
   }
-
-  // ===== NEW: Ore/sec -> Ore/click transfer API =====
 
   double getOrePerSecondTransfer() => _this._orePerSecondTransfer;
 
@@ -250,9 +237,78 @@ implements IdleGameEffectTarget {
     _this._saveProgress();
   }
 
-  // ===== Random spawn chance API =====
+  // ===== NEW: Idle Boost API (not part of the interface, but handy) =====
 
-  double getRandomSpawnChance() => _this._randomSpawnChance;
+  double getIdleBoost() => _this._idleBoost;
+
+  void setIdleBoost(double value) {
+    _this.setState(() {
+      _this._idleBoost = value;
+    });
+    _this._updatePreviewPerClick();
+    _this._saveProgress();
+  }
+
+  DateTime? getLastRockClickTime() => _this._lastRockClickTime;
+
+  // ===== NEW: Time-Aging API (not part of the interface, but handy) =====
+
+  double getClickAging() => _this._clickAging;
+  void setClickAging(double value) {
+    _this.setState(() {
+      _this._clickAging = value;
+    });
+    _this._saveProgress();
+  }
+
+  double getClickTimePower() => _this._clickTimePower;
+  void setClickTimePower(double value) {
+    _this.setState(() {
+      _this._clickTimePower = math.max(1.0, value);
+    });
+    _this._updatePreviewPerClick();
+    _this._saveProgress();
+  }
+
+  double getRpsAging() => _this._rpsAging;
+  void setRpsAging(double value) {
+    _this.setState(() {
+      _this._rpsAging = value;
+    });
+    _this._saveProgress();
+  }
+
+  double getRpsTimePower() => _this._rpsTimePower;
+  void setRpsTimePower(double value) {
+    _this.setState(() {
+      _this._rpsTimePower = math.max(1.0, value);
+    });
+    _this._saveProgress();
+  }
+
+  double getGpsAging() => _this._gpsAging;
+  void setGpsAging(double value) {
+    _this.setState(() {
+      _this._gpsAging = value;
+    });
+    _this._saveProgress();
+  }
+
+  double getGpsTimePower() => _this._gpsTimePower;
+  void setGpsTimePower(double value) {
+    _this.setState(() {
+      _this._gpsTimePower = math.max(0, value);
+    });
+    _this._saveProgress();
+  }
+
+  int getTicsPerSecond() => _this._ticsPerSecond;
+  void setTicsPerSecond(int value) {
+    _this.setState(() {
+      _this._ticsPerSecond = math.max(0, value);
+    });
+    _this._saveProgress();
+  }
 
   @override
   void setRandomSpawnChance(double value) {
@@ -262,7 +318,7 @@ implements IdleGameEffectTarget {
     _this._saveProgress();
   }
 
-  // ===== Tracked click / cycle / card-count stats API =====
+  double getRandomSpawnChance() => _this._randomSpawnChance;
 
   double getManualClickCycles() => _this._manualClickCyclesThisRun;
 
@@ -274,7 +330,6 @@ implements IdleGameEffectTarget {
 
   int getMaxCardCount() => _this._maxCardCount;
 
-  // Optional helpers you might want later:
   String getGameMode() => _this._gameMode;
 
   double getAntimatter() => _this._antimatter;
@@ -283,17 +338,14 @@ implements IdleGameEffectTarget {
 
   int getCurrentTicNumber() => _this._currentTicNumber;
 
-  /// Expose polynomial update if you want to call it from card effects later.
   void setAntimatterPolynomialCoeff(int degree, int coeff) {
     _this.updateAntimatterPolynomialScalars(degree, coeff);
   }
 
   @override
   void simulateOfflineSeconds(int seconds) {
-    _this._applyOfflineProgress(secondsOverride: seconds);
+    _this._applyOfflineProgress(secondsOverride: seconds, showNotification: false);
   }
-
-  // ===== Internal helper to access the concrete state instance =====
 
   _IdleGameScreenState get _this => this as _IdleGameScreenState;
 }

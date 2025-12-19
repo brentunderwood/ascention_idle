@@ -1,3 +1,4 @@
+import 'package:ascention_idle/cards/player_collection_repository.dart';
 import 'package:flutter/foundation.dart';
 
 /// A target that card effects can act on.
@@ -24,7 +25,13 @@ abstract class IdleGameEffectTarget {
   int getManualClickPower();
   double getClickMultiplicity();
   List<OwnedCard> getAllOwnedCards();
+  List<ActiveDeckCard> getActiveDeck();
   double getOrePerSecondTransfer();
+  double getIdleBoost();
+  double getClickAging();
+  double getRpsAging();
+  double getGpsAging();
+  int getTicsPerSecond();
 
   void addGold(double amount);
   void addOre(double amount);
@@ -47,6 +54,11 @@ abstract class IdleGameEffectTarget {
   void updateAntimatterPolynomialScalars(int degree, int coefficient);
   void simulateOfflineSeconds(int seconds);
   void setOrePerSecondTransfer(double amount);
+  void setIdleBoost(double amount);
+  void setClickAging(double value);
+  void setRpsAging(double value);
+  void setGpsAging(double value);
+  void setTicsPerSecond(int value);
 }
 
 /// Signature for a card effect function.

@@ -27,6 +27,24 @@ const String kBaseClickOpsCoeffKey = 'base_click_ops_coeff';
 /// NEW: Per-click transfer amount from ore/sec -> ore/click (per-mode, saved).
 const String kOrePerSecondTransferKey = 'ore_per_second_transfer';
 
+/// NEW: last time the rock was clicked (per-mode, resets on rebirth).
+const String kLastRockClickTimeKey = 'last_rock_click_millis';
+
+/// NEW: idle boost value (per-mode, resets on rebirth).
+const String kIdleBoostKey = 'idle_boost';
+
+/// NEW: time-aging mechanics (per-mode, reset on rebirth).
+const String kClickAgingKey = 'click_aging';
+const String kClickTimePowerKey = 'click_time_power';
+const String kRpsAgingKey = 'rps_aging';
+const String kRpsTimePowerKey = 'rps_time_power';
+const String kGpsAgingKey = 'gps_aging';
+const String kGpsTimePowerKey = 'gps_time_power';
+
+/// NEW: bonus "tics per second" (per-mode, reset on rebirth).
+/// Interpreted as "extra simulated seconds" each real second, silently.
+const String kTicsPerSecondKey = 'tics_per_second';
+
 /// Key for antimatter polynomial per-term scalars (per-mode).
 const String kAntimatterPolynomialScalarsKey =
     'antimatter_polynomial_scalars';
@@ -82,6 +100,31 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   /// Saved per-mode. Default = 0.0.
   double _orePerSecondTransfer = 0.0;
 
+  /// NEW: idle boost value (starts at 0, reset on rebirth).
+  /// Saved per-mode.
+  double _idleBoost = 0.0;
+
+  /// NEW: last time the rock was clicked (reset on rebirth).
+  /// Saved per-mode so it survives app restarts within the run.
+  DateTime? _lastRockClickTime;
+
+  /// NEW: time-aging mechanics (reset on rebirth, stored per-mode).
+  ///
+  /// - clickTimePower increases by clickAging every second; multiplies ore/click
+  /// - rpsTimePower increases by rpsAging every second; multiplies ore/sec
+  /// - gpsTimePower increases by gpsAging every second; adds refined gold/sec
+  double _clickAging = 0.0;
+  double _clickTimePower = 1.0;
+
+  double _rpsAging = 0.0;
+  double _rpsTimePower = 1.0;
+
+  double _gpsAging = 0.0;
+  double _gpsTimePower = 0.0;
+
+  /// NEW: bonus simulated seconds each real second (silent).
+  int _ticsPerSecond = 0;
+
   /// Click/OPS coefficients – RESET on rebirth, stored per-mode.
   double _gpsClickCoeff = 0.0;
   double _totalOreClickCoeff = 0.0;
@@ -99,7 +142,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
   /// Momentum upgrade parameters – RESET on rebirth, stored per-mode.
   double _momentumCap = 0.0;
-  double _momentumScale = 1.0;
+  double _momentumScale = 0.0;
 
   /// Cached value for previewing how much will be gained on the next click.
   double _lastComputedOrePerClick = 1.0;
@@ -322,9 +365,22 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final storedBaseClickOpsCoeff =
     _prefs!.getDouble(mk(kBaseClickOpsCoeffKey));
 
-    // NEW: transfer amount (per-mode).
+    // Transfer amount (per-mode).
     final storedOrePerSecondTransfer =
     _prefs!.getDouble(mk(kOrePerSecondTransferKey));
+
+    // NEW: idle boost + last rock click time (per-mode).
+    final storedIdleBoost = _prefs!.getDouble(mk(kIdleBoostKey));
+    final storedLastRockClickMillis = _prefs!.getInt(mk(kLastRockClickTimeKey));
+
+    // NEW: time-aging mechanics (per-mode).
+    final storedClickAging = _prefs!.getDouble(mk(kClickAgingKey));
+    final storedClickTimePower = _prefs!.getDouble(mk(kClickTimePowerKey));
+    final storedRpsAging = _prefs!.getDouble(mk(kRpsAgingKey));
+    final storedRpsTimePower = _prefs!.getDouble(mk(kRpsTimePowerKey));
+    final storedGpsAging = _prefs!.getDouble(mk(kGpsAgingKey));
+    final storedGpsTimePower = _prefs!.getDouble(mk(kGpsTimePowerKey));
+    final storedTicsPerSecond = _prefs!.getInt(mk(kTicsPerSecondKey));
 
     // Per-run stats.
     final storedClicksThisRun = _prefs!.getInt(mk(kClicksThisRunKey));
@@ -407,8 +463,24 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       _baseOrePerClick = storedBaseOrePerClick ?? 0.0;
 
-      // NEW: transfer amount (default 0).
       _orePerSecondTransfer = storedOrePerSecondTransfer ?? 0.0;
+
+      _idleBoost = storedIdleBoost ?? 0.0;
+      _lastRockClickTime = storedLastRockClickMillis != null
+          ? DateTime.fromMillisecondsSinceEpoch(storedLastRockClickMillis)
+          : null;
+
+      // NEW: time-aging mechanics defaults.
+      _clickAging = storedClickAging ?? 0.0;
+      _clickTimePower = math.max(1.0, storedClickTimePower ?? 1.0);
+
+      _rpsAging = storedRpsAging ?? 0.0;
+      _rpsTimePower = math.max(1.0, storedRpsTimePower ?? 1.0);
+
+      _gpsAging = storedGpsAging ?? 0.0;
+      _gpsTimePower = math.max(0.0, storedGpsTimePower ?? 0.0);
+
+      _ticsPerSecond = math.max(0, storedTicsPerSecond ?? 0);
 
       _rebirthMultiplier = storedRebirthMultiplier ?? 1.0;
       _overallMultiplier = math.max(1.0, storedOverallMultiplier ?? 1.0);
@@ -428,7 +500,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
           : null;
 
       _momentumCap = storedMomentumCap ?? 0.0;
-      _momentumScale = storedMomentumScale ?? 1.0;
+      _momentumScale = storedMomentumScale ?? 0.0;
 
       _bonusOrePerSecond = storedBonusOrePerSecond ?? 0.0;
       _bonusOrePerClick = storedBonusOrePerClick ?? 0.0;
@@ -476,9 +548,26 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setDouble(mk(kOrePerSecondKey), _orePerSecond);
     await _prefs!.setDouble(mk(kBaseOrePerClickKey), _baseOrePerClick);
 
-    // NEW: transfer amount
-    await _prefs!
-        .setDouble(mk(kOrePerSecondTransferKey), _orePerSecondTransfer);
+    await _prefs!.setDouble(mk(kOrePerSecondTransferKey), _orePerSecondTransfer);
+
+    await _prefs!.setDouble(mk(kIdleBoostKey), _idleBoost);
+    if (_lastRockClickTime != null) {
+      await _prefs!.setInt(
+        mk(kLastRockClickTimeKey),
+        _lastRockClickTime!.millisecondsSinceEpoch,
+      );
+    } else {
+      await _prefs!.remove(mk(kLastRockClickTimeKey));
+    }
+
+    // NEW: time-aging mechanics (per-mode).
+    await _prefs!.setDouble(mk(kClickAgingKey), _clickAging);
+    await _prefs!.setDouble(mk(kClickTimePowerKey), _clickTimePower);
+    await _prefs!.setDouble(mk(kRpsAgingKey), _rpsAging);
+    await _prefs!.setDouble(mk(kRpsTimePowerKey), _rpsTimePower);
+    await _prefs!.setDouble(mk(kGpsAgingKey), _gpsAging);
+    await _prefs!.setDouble(mk(kGpsTimePowerKey), _gpsTimePower);
+    await _prefs!.setInt(mk(kTicsPerSecondKey), _ticsPerSecond);
 
     await _prefs!.setInt(mk(kManualClickCountKey), _manualClickCount);
     await _prefs!.setInt(mk(kManualClickPowerKey), _manualClickPower);
@@ -551,8 +640,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setInt(kRebirthCountKey, _rebirthCount);
 
     await _prefs!.setDouble(kMaxGoldMultiplierKey, _maxGoldMultiplier);
-    await _prefs!.setDouble(
-        kAchievementMultiplierKey, _achievementMultiplier);
+    await _prefs!.setDouble(kAchievementMultiplierKey, _achievementMultiplier);
 
     await _prefs!.setInt(kTotalClicksKey, _totalClicks);
     await _prefs!.setDouble(
@@ -573,20 +661,14 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   /// Return the prefs key for the stored last progress of a given achievement.
   String _achievementProgressKey(String id) => 'achievement_${id}_progress';
 
-  /// Apply rewards for a single completed achievement level:
-  /// - +1 max deck capacity.
-  /// - +1 max cards if maxCards < sqrt(maxCapacity) after the capacity bump.
-  /// - +0.01 to the achievement multiplier.
   Future<void> _applyAchievementRewards() async {
     _prefs ??= await SharedPreferences.getInstance();
 
     int maxCards = _prefs!.getInt(kDeckMaxCardsKey) ?? 1;
     int maxCapacity = _prefs!.getInt(kDeckMaxCapacityKey) ?? 1;
 
-    // +1 capacity per completed achievement level
     maxCapacity += 1;
 
-    // If maxCards < sqrt(maxCapacity) AFTER increasing capacity, +1 max cards.
     if (math.pow(maxCards + 1, 2) <= maxCapacity && maxCards < 100) {
       maxCards += 1;
     }
@@ -594,21 +676,16 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setInt(kDeckMaxCardsKey, maxCards);
     await _prefs!.setInt(kDeckMaxCapacityKey, maxCapacity);
 
-    // Increase achievement multiplier (never reset on rebirth).
     setState(() {
       _achievementMultiplier += 0.01;
     });
-    await _prefs!.setDouble(
-        kAchievementMultiplierKey, _achievementMultiplier);
+    await _prefs!.setDouble(kAchievementMultiplierKey, _achievementMultiplier);
   }
 
-  /// Evaluate all achievements using the current game state, and apply
-  /// rewards if any thresholds are crossed.
   Future<void> _evaluateAndApplyAchievements() async {
     _prefs ??= await SharedPreferences.getInstance();
 
     for (final def in kAchievementCatalog) {
-      // Compute current progress using the shared catalog progressFn.
       final double progress = def.progressFn(this);
 
       final String levelKey = _achievementLevelKey(def.id);
@@ -616,11 +693,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       int level = _prefs!.getInt(levelKey) ?? 0;
 
-      // Always store the latest progress so the AchievementsTab can display it.
       await _prefs!.setDouble(progressKey, progress);
 
       if (def.unique) {
-        // One-shot achievement: only go from level 0 -> 1 once.
         final double target = def.baseTarget;
 
         if (level == 0 && progress >= target) {
@@ -628,12 +703,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
           await _applyAchievementRewards();
           await _prefs!.setInt(levelKey, level);
         }
-
-        // No scaling beyond that; continue to next achievement.
         continue;
       }
 
-      // Scaling achievements: baseTarget * 10^level for each level.
       double target = achievementTargetForLevel(def, level);
       bool leveled = false;
 
@@ -641,8 +713,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         level += 1;
         leveled = true;
         await _applyAchievementRewards();
-
-        // Next level's target.
         target = achievementTargetForLevel(def, level);
       }
 
@@ -652,29 +722,20 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     }
   }
 
-  /// Change the active game mode and reload per-mode state.
-  ///
-  /// This:
-  /// 1. Saves the current mode's state.
-  /// 2. Switches [_gameMode].
-  /// 3. Loads the other mode's state.
-  /// 4. Applies offline progress for that mode.
   Future<void> _changeGameMode(String newMode) async {
     if (newMode != 'gold' && newMode != 'antimatter') return;
     if (newMode == _gameMode) return;
 
     _prefs ??= await SharedPreferences.getInstance();
 
-    // Save current mode first.
     await _saveProgress();
 
     setState(() {
       _gameMode = newMode;
-      _lastActiveTime = null; // will be reloaded
+      _lastActiveTime = null;
     });
     await _prefs!.setString(kActiveGameModeKey, _gameMode);
 
-    // Load the other mode's state and apply its offline progress.
     await _loadModeSpecificProgress();
     await _applyOfflineProgress();
 
@@ -686,7 +747,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     _timer = Timer.periodic(const Duration(seconds: 1), (_) async {
       _prefs ??= await SharedPreferences.getInstance();
 
-      // Detect game-mode changes coming from ActivityTab (Next Run selection).
       final storedSelected = _prefs!.getString(kNextRunSelectedKey);
       String nextMode;
       if (storedSelected == 'mine_gold') {
@@ -715,55 +775,64 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         momentumChanged = true;
       }
 
-      // Compute effective ore per second from centralized formula.
-      final double effectiveOrePerSecond = _computeOrePerSecond();
-
+      // Apply per-second aging BEFORE generating this second's resources.
       setState(() {
-        // Passive ore gain.
-        _goldOre += effectiveOrePerSecond;
-        _totalGoldOre += effectiveOrePerSecond;
+        _clickTimePower = math.max(1.0, _clickTimePower + _clickAging);
+        _rpsTimePower = math.max(1.0, _rpsTimePower + _rpsAging);
+        _gpsTimePower = math.max(0.0, _gpsTimePower + _gpsAging);
 
-        // Tick counter always increments per second in this mode.
-        _currentTicNumber += 1;
-
-        // Antimatter evolution & pending dark matter reward only in antimatter mode.
-        if (_gameMode == 'antimatter') {
-          // First, gain antimatter at the current rate.
-          _antimatter += _antimatterPerSecond;
-
-          // Then, update antimatterPerSecond by the polynomial.
-          final double delta = _evaluateAntimatterPolynomial();
-          _antimatterPerSecond = delta;
-
-          // Pending dark matter reward increases each tic based on factorialConversion.
-          _pendingDarkMatter += factorialConversion(_antimatter) / math.pow(10, 10);
+        // GPS: add refined gold (spendable) each second; does NOT affect rebirth.
+        if (_gpsTimePower > 0) {
+          _gold += _gpsTimePower;
         }
       });
 
-      // Tutorial: ore changed from passive income.
+      final double effectiveOrePerSecond = _computeOrePerSecond();
+
+      setState(() {
+        _goldOre += effectiveOrePerSecond;
+        _totalGoldOre += effectiveOrePerSecond;
+
+        _currentTicNumber += 1;
+
+        if (_gameMode == 'antimatter') {
+          _antimatter += _antimatterPerSecond;
+
+          final double delta = _evaluateAntimatterPolynomial();
+          _antimatterPerSecond = delta;
+
+          _pendingDarkMatter +=
+              factorialConversion(_antimatter) / math.pow(10, 10);
+        }
+      });
+
       TutorialManager.instance
           .onGoldOreChanged(context, _manualClickCount.toDouble());
 
-      // Handle nugget spawn / expiry once per second.
       _tickNugget();
 
       if (momentumChanged) {
         _updatePreviewPerClick();
       }
 
-      // Evaluate achievements based on the updated state.
+      // BONUS "tics per second": silently simulate extra seconds each real second.
+      if (_ticsPerSecond > 0) {
+        await _applyOfflineProgress(
+          secondsOverride: _ticsPerSecond,
+          showNotification: false,
+        );
+      }
+
       await _evaluateAndApplyAchievements();
 
       _saveProgress();
     });
   }
 
-  /// Handles nugget spawn/despawn logic.
   void _tickNugget() {
     final now = DateTime.now();
     bool changed = false;
 
-    // Despawn any nuggets older than 10 seconds.
     if (_nuggets.isNotEmpty) {
       final before = _nuggets.length;
       _nuggets.removeWhere(
@@ -775,7 +844,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     }
 
     if (_randomSpawnChance > 0 && _playAreaSize != null) {
-      // Probability of at least one spawn this second (clamped to 1).
       final double p = _randomSpawnChance.clamp(0.0, 1.0);
       if (_rng.nextDouble() < p) {
         const double nuggetSize = 64.0;
@@ -802,7 +870,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     }
   }
 
-  /// Shared helper for computing manualClickCycles from clicks.
   double _computeManualClickCyclesFromClicks(int manualClicks) {
     const double scaling_factor = 1.1;
     if (manualClicks < 100) {
@@ -818,24 +885,35 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     return manualClickCycles;
   }
 
-  Future<void> _applyOfflineProgress({int? secondsOverride}) async {
-    // base part for OPS (before frenzy/overall multipliers)
+  // Sum of discrete arithmetic series:
+  // P1 = P0 + a*1, P2 = P0 + a*2, ... Pn = P0 + a*n
+  // sum(Pk) for k=1..n = n*P0 + a*n(n+1)/2
+  double _sumPowerOverSeconds({
+    required double power0,
+    required double aging,
+    required int seconds,
+  }) {
+    if (seconds <= 0) return 0.0;
+    return seconds * power0 + aging * (seconds * (seconds + 1) / 2.0);
+  }
+
+  Future<void> _applyOfflineProgress({
+    int? secondsOverride,
+    bool showNotification = true,
+  }) async {
     final double baseCoreOps = _orePerSecond + _bonusOrePerSecond;
     final double baseClick = 1.0 + _baseOrePerClick;
     final double baseCombined = baseCoreOps + _baseClickOpsCoeff * baseClick;
 
     if (baseCombined <= 0) {
-      // Nothing to do, just update last active.
       await _saveProgress();
       return;
     }
 
-    // Determine how many seconds to simulate and what to show in the popup.
     int seconds;
     Duration diff;
 
     if (secondsOverride != null) {
-      // Caller explicitly tells us how many seconds of "offline" to apply.
       if (secondsOverride <= 0) {
         await _saveProgress();
         return;
@@ -843,7 +921,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       seconds = secondsOverride;
       diff = Duration(seconds: secondsOverride);
     } else {
-      // Original behavior: derive seconds from _lastActiveTime.
       if (_lastActiveTime == null) {
         await _saveProgress();
         return;
@@ -853,22 +930,48 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       diff = now.difference(_lastActiveTime!);
       seconds = diff.inSeconds;
 
-      // Ignore very short gaps (e.g., app switch for a second)
       if (seconds <= 60) {
         await _saveProgress();
         return;
       }
     }
 
+    // Apply aging effects across the offline duration (discrete per-second model).
+    // We interpret "every second power increases by aging" as:
+    // for each second: power += aging; then resource generation uses that second's power.
+    //
+    // That yields a sum of powers over N seconds:
+    // sum_{k=1..N} (P0 + a*k) = N*P0 + a*N(N+1)/2
+    final double clickPower0 = _clickTimePower;
+    final double rpsPower0 = _rpsTimePower;
+    final double gpsPower0 = _gpsTimePower;
+
+    final double rpsPowerSum = _sumPowerOverSeconds(
+      power0: rpsPower0,
+      aging: _rpsAging,
+      seconds: seconds,
+    );
+
+    final double gpsPowerSum = _sumPowerOverSeconds(
+      power0: gpsPower0,
+      aging: _gpsAging,
+      seconds: seconds,
+    );
+
+    // Update the powers to their final values after "seconds" increments.
+    final double finalClickPower =
+    math.max(1.0, clickPower0 + _clickAging * seconds);
+    final double finalRpsPower =
+    math.max(1.0, rpsPower0 + _rpsAging * seconds);
+    final double finalGpsPower =
+    math.max(0.0, gpsPower0 + _gpsAging * seconds);
+
     double earned;
 
-    // Ore offline progress with Frenzy overlap support (same as before).
+    // Base earned is baseCombined * overallMultiplier * rpsTimePower (per-second varying).
     if (_spellFrenzyActive &&
         _spellFrenzyLastTriggerTime != null &&
         _spellFrenzyDurationSeconds > 0) {
-      // For the "override seconds" case, we synthesize an offline window
-      // as [now - seconds, now]. For the normal case, this is effectively
-      // the same as before, just expressed this way.
       final now = DateTime.now();
       final int offlineEndSec = now.millisecondsSinceEpoch ~/ 1000;
       final int offlineStartSec = offlineEndSec - seconds;
@@ -884,24 +987,47 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       final int normalSeconds = math.max(0, seconds - frenzyOverlap);
 
-      final double normalEarned = normalSeconds * baseCombined * _overallMultiplier;
-      final double frenzyEarned = frenzyOverlap *
-          baseCombined *
+      // We need rpsPowerSum split into normal vs frenzy portions.
+      // Approx: assume the first normalSeconds are "normal" and remaining are frenzyOverlap.
+      // This is close enough for gameplay and avoids complex timeline slicing.
+      final double normalRpsSum = _sumPowerOverSeconds(
+        power0: rpsPower0,
+        aging: _rpsAging,
+        seconds: normalSeconds,
+      );
+      final double frenzyRpsSum = _sumPowerOverSeconds(
+        power0: math.max(1.0, rpsPower0 + _rpsAging * normalSeconds),
+        aging: _rpsAging,
+        seconds: frenzyOverlap,
+      );
+
+      final double normalEarned =
+          baseCombined * _overallMultiplier * normalRpsSum;
+      final double frenzyEarned = baseCombined *
+          _overallMultiplier *
           _spellFrenzyMultiplier *
-          _overallMultiplier;
+          frenzyRpsSum;
 
       earned = normalEarned + frenzyEarned;
     } else {
-      // No relevant Frenzy interval: use baseCombined only.
-      earned = seconds * baseCombined * _overallMultiplier;
+      earned = baseCombined * _overallMultiplier * rpsPowerSum;
     }
 
     setState(() {
       _goldOre += earned;
       _totalGoldOre += earned;
+
+      // GPS refined gold: add spendable refined gold; do NOT touch totalRefinedGold.
+      if (gpsPowerSum > 0) {
+        _gold += gpsPowerSum;
+      }
+
+      // Commit final time powers after offline.
+      _clickTimePower = finalClickPower;
+      _rpsTimePower = finalRpsPower;
+      _gpsTimePower = finalGpsPower;
     });
 
-    // Offline antimatter + tic progression (for antimatter mode only).
     if (_gameMode == 'antimatter' && seconds > 0) {
       setState(() {
         _currentTicNumber += seconds;
@@ -911,26 +1037,24 @@ class _IdleGameScreenState extends State<IdleGameScreen>
             seconds * factorialConversion(_antimatter) / math.pow(10, 10);
       });
     } else if (seconds > 0) {
-      // Still keep tic number in sync in non-antimatter modes.
       setState(() {
         _currentTicNumber += seconds;
       });
     }
 
-    // Tutorial: ore changed due to offline progress.
     TutorialManager.instance
         .onGoldOreChanged(context, _manualClickCount.toDouble());
 
-    // Achievements may be completed from offline gains.
     await _evaluateAndApplyAchievements();
     await _saveProgress();
+
+    if (!showNotification) return;
 
     final durationText = _formatDuration(diff);
 
     final message = 'While you were away for $durationText,\n'
         'your miners produced ${earned.toStringAsFixed(0)} gold ore!';
 
-    // Show the alert *after* first frame to avoid context issues in initState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       alert_user(
         context,
@@ -963,26 +1087,22 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   double _calculateRebirthGold() {
     if (_goldOre <= 0) return 0;
 
-    // level = floor(cuberoot(total_gold_ore))
     double levelRaw = math.pow(_totalGoldOre, 1 / 3).floorToDouble();
 
     final double manualClickCycles =
     _computeManualClickCyclesFromClicks(_manualClickCount);
 
-    // Track this run's manual click cycles.
     _manualClickCyclesThisRun = manualClickCycles;
 
     return levelRaw + manualClickCycles;
   }
 
-  /// Clear upgrade counts for **this mode** only.
   Future<void> _clearCardUpgradeCounts() async {
     _prefs ??= await SharedPreferences.getInstance();
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
     await _prefs!.remove(mk(kCardUpgradeCountsKey));
   }
 
-  /// Clear upgrade deck snapshot for **this mode** only.
   Future<void> _clearUpgradeDeckSnapshot() async {
     _prefs ??= await SharedPreferences.getInstance();
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
@@ -993,7 +1113,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final double rebirthGold = _calculateRebirthGold();
     final bool isGoldModeNow = _gameMode == 'gold';
 
-    // Pending dark matter reward in antimatter mode (accumulated so far).
     final double previewDarkMatterReward = _pendingDarkMatter;
 
     final String confirmText;
@@ -1033,7 +1152,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
     if (confirm != true) return;
 
-    // Determine which Next Run option is currently selected.
     _prefs ??= await SharedPreferences.getInstance();
     final selectedModeRaw = _prefs!.getString(kNextRunSelectedKey) ?? 'gold';
 
@@ -1048,107 +1166,98 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       selectedMode = 'gold';
     }
 
-    // Snapshot current run's manual click cycles once for "all time" accumulation.
     final double manualCyclesThisRun =
     _computeManualClickCyclesFromClicks(_manualClickCount);
 
     final bool wasGoldMode = _gameMode == 'gold';
 
-    // Dark matter reward is the pending amount accumulated so far.
     final double darkMatterReward = _pendingDarkMatter;
 
     setState(() {
-      // Update tracked manual-cycle stats.
       _manualClickCyclesThisRun = manualCyclesThisRun;
       _totalManualClickCycles += manualCyclesThisRun;
 
-      // New run: reset per-run click counter.
       _clicksThisRun = 0;
 
-      // Update the active game mode for this run.
       _gameMode = selectedMode;
 
-      // GOLD MODE REBIRTH:
-      // Only in gold mode do we grant refined gold & update related meta.
       if (wasGoldMode && rebirthGold > 0) {
         _gold += rebirthGold;
         _totalRefinedGold += rebirthGold;
 
         _rebirthCount += 1;
 
-        // Update max gold multiplier with this rebirth result
         final double rebirthGoldForMax = rebirthGold <= 0 ? 1.0 : rebirthGold;
         if (rebirthGoldForMax > _maxGoldMultiplier) {
           _maxGoldMultiplier = rebirthGoldForMax;
         }
 
-        // At the START of the new rebirth:
         final double combined = (1 +
             _rebirthMultiplier *
-                math.log(math.max(rebirthGold, 1.0)) /
-                math.log(1000) *
-                _achievementMultiplier *
-                (1 + math.log(_maxGoldMultiplier) / math.log(1000)));
+            _achievementMultiplier *
+            (1 + math.log(_maxGoldMultiplier) / math.log(1000)));
         _overallMultiplier = math.max(1.0, combined);
       }
 
-      // ANTIMATTER MODE REBIRTH:
-      // Only in antimatter mode do we grant dark matter from accumulated pending reward.
       if (!wasGoldMode && darkMatterReward > 0) {
         _darkMatter += darkMatterReward;
         _pendingDarkMatter = 0.0;
       }
 
-      // Rebirth multiplier no longer applies; reset it to 1 for the new run.
       _rebirthMultiplier = 1.0;
 
-      // Reset ore values
       _goldOre = 0;
       _totalGoldOre = 0;
 
-      // In antimatter mode, start with 1 gold ore per second; otherwise 0.
       _orePerSecond = (_gameMode == 'antimatter') ? 1.0 : 0.0;
       _bonusOrePerSecond = 0.0;
 
-      // Reset click-related stats for the new run
       _baseOrePerClick = 0.0;
       _bonusOrePerClick = 0.0;
       _lastComputedOrePerClick = 1.0;
 
-      // NEW: reset transfer amount for the new run/mode
       _orePerSecondTransfer = 0.0;
 
-      // Reset momentum for the new run
+      // NEW: reset idle mechanic each rebirth.
+      _idleBoost = 0.0;
+      _lastRockClickTime = null;
+
+      // NEW: reset time-aging mechanics each rebirth.
+      _clickAging = 0.0;
+      _clickTimePower = 1.0;
+
+      _rpsAging = 0.0;
+      _rpsTimePower = 1.0;
+
+      _gpsAging = 0.0;
+      _gpsTimePower = 0.0;
+
+      _ticsPerSecond = 0;
+
       _momentumClicks = 0;
       _lastClickTime = null;
 
-      // Reset manual click count for the new run
       _manualClickCount = 0;
       _manualClickPower = 1;
 
-      // Reset nugget-related state (including spawn chance back to 0).
       _nuggets.clear();
       _bonusRebirthGoldFromNuggets = 0;
       _randomSpawnChance = 0.0;
 
-      // Reset Frenzy completely for this new run/mode.
       _spellFrenzyActive = false;
       _spellFrenzyLastTriggerTime = null;
       _spellFrenzyDurationSeconds = 0.0;
       _spellFrenzyCooldownSeconds = 0.0;
       _spellFrenzyMultiplier = 1.0;
 
-      // Reset momentum config for this new run/mode.
       _momentumCap = 0.0;
-      _momentumScale = 1.0;
+      _momentumScale = 0.0;
 
-      // Reset click/OPS coefficients for this new run/mode.
       _gpsClickCoeff = 0.0;
       _totalOreClickCoeff = 0.0;
       _clickMultiplicity = 1.0;
       _baseClickOpsCoeff = 0.0;
 
-      // Reset antimatter progression for this new run in this mode.
       _antimatter = 0.0;
       _antimatterPerSecond = 0.0;
       _antimatterPolynomial = [];
@@ -1156,8 +1265,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _currentTicNumber = 0;
     });
 
-    // Clear per-run card upgrades and the frozen upgrade deck snapshot
-    // so the next run's upgrade pool is rebuilt from the active deck.
     await _clearCardUpgradeCounts();
     await _clearUpgradeDeckSnapshot();
 
@@ -1166,7 +1273,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
     final runGoalText = _gameMode == 'gold' ? 'Mine gold' : 'Create antimatter';
 
-    // Different completion messages for gold vs antimatter rebirth.
     String message;
     if (wasGoldMode) {
       message =
@@ -1191,8 +1297,32 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     );
   }
 
+  double _computeIdleClickMultiplier({
+    required DateTime now,
+    DateTime? lastRockClickTimeOverride,
+    double? idleBoostOverride,
+  }) {
+    final DateTime? last = lastRockClickTimeOverride ?? _lastRockClickTime;
+    final double boost = idleBoostOverride ?? _idleBoost;
+
+    if (last == null) return 1.0;
+
+    final int secondsSince = now.difference(last).inSeconds;
+    if (secondsSince <= 60) return 1.0;
+
+    // Interpreting your spec as "extra multiplier grows with idle time":
+    // multiplier = 1 + idle_boost * (secondsSince - 60)
+    final double extra = boost * (secondsSince - 60);
+    return math.max(1.0, 1.0 + extra);
+  }
+
   /// Centralized ore-per-click calculation.
-  double _computeOrePerClick({int? manualClicksOverride}) {
+  double _computeOrePerClick({
+    int? manualClicksOverride,
+    DateTime? now,
+    DateTime? lastRockClickTimeOverride,
+    double? idleBoostOverride,
+  }) {
     final int clicks = manualClicksOverride ?? _manualClickCount;
 
     final int phase = _computeClickPhase(clicks);
@@ -1206,7 +1336,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         _gpsClickCoeff * _orePerSecond +
         _totalOreClickCoeff * math.pow(_totalGoldOre, 0.5);
 
-    // Momentum: defaults to neutral (1.0) when momentum isn't unlocked.
     double momentumFactor = 1.0;
     if (_momentumCap > 0 && _momentumScale > 0) {
       final double scaled = _momentumScale * _momentumClicks;
@@ -1214,23 +1343,26 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       momentumFactor += clamped;
     }
 
+    final DateTime t = now ?? DateTime.now();
+    final double idleMult = _computeIdleClickMultiplier(
+      now: t,
+      lastRockClickTimeOverride: lastRockClickTimeOverride,
+      idleBoostOverride: idleBoostOverride,
+    );
+
+    // NEW: clickTimePower multiplier applied to ore-per-click.
+    final double timeMult = math.max(1.0, _clickTimePower);
+
     return baseTerm *
         phaseMult *
         frenzyMult *
         momentumFactor *
         _overallMultiplier *
-        _clickMultiplicity;
+        _clickMultiplicity *
+        idleMult *
+        timeMult;
   }
 
-  /// Centralized ore-per-second calculation.
-  ///
-  /// Formula:
-  ///   (baseOrePerSecond + baseClickOpsCoeff * baseOrePerClick)
-  ///     * frenzyMult * _overallMultiplier
-  ///
-  /// where:
-  ///   baseOrePerSecond = _orePerSecond + _bonusOrePerSecond
-  ///   baseOrePerClick  = 1.0 + _baseOrePerClick
   double _computeOrePerSecond() {
     final double baseOrePerSecond = _orePerSecond + _bonusOrePerSecond;
 
@@ -1240,12 +1372,12 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final double baseCombined =
         baseOrePerSecond + _baseClickOpsCoeff * (1.0 + _baseOrePerClick);
 
-    return baseCombined * frenzyMult * _overallMultiplier;
+    // NEW: rpsTimePower multiplier applied to ore-per-second.
+    final double timeMult = math.max(1.0, _rpsTimePower);
+
+    return baseCombined * frenzyMult * _overallMultiplier * timeMult;
   }
 
-  /// Evaluate the antimatter polynomial at the current tic number:
-  ///
-  ///   sum = Σ (poly[i] * scalars[i] * current_tic_number^i)
   double _evaluateAntimatterPolynomial({int seconds = 1}) {
     if (_antimatterPolynomial.isEmpty) return 0.0;
     for (int i = 0; i < _antimatterPolynomial.length - 1; i++) {
@@ -1260,8 +1392,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         .toDouble();
   }
 
-  /// Update a coefficient of the antimatter polynomial.
-  /// (Logic for when to call this can come later.)
   void updateAntimatterPolynomialScalars(int degree, int coefficient) {
     if (degree < 0) return;
     if (degree >= _antimatterPolynomialScalars.length) {
@@ -1271,20 +1401,21 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     _antimatterPolynomialScalars[degree] = coefficient.toDouble();
     if (degree >= _antimatterPolynomial.length) {
       _antimatterPolynomial.addAll(
-          List<int>.filled(degree + 1 - _antimatterPolynomial.length, 1));
+        List<int>.filled(degree + 1 - _antimatterPolynomial.length, 1),
+      );
     }
     _saveProgress();
   }
 
-  /// Update cached preview value using the centralized ore-per-click formula.
   void _updatePreviewPerClick() {
     setState(() {
-      _lastComputedOrePerClick =
-          _computeOrePerClick(manualClicksOverride: _manualClickCount);
+      _lastComputedOrePerClick = _computeOrePerClick(
+        manualClicksOverride: _manualClickCount,
+        now: DateTime.now(),
+      );
     });
   }
 
-  /// Called when an upgrade is purchased in the Upgrades tab.
   void _applyCardUpgradeEffect(
       GameCard card,
       int cardLevel,
@@ -1293,15 +1424,12 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     setState(() {
       card.cardEffect?.call(this, cardLevel, upgradesThisRun);
 
-      // Track the highest per-card upgrade count across all time.
       if (upgradesThisRun > _maxCardCount) {
         _maxCardCount = upgradesThisRun;
       }
     });
     _saveProgress();
   }
-
-  // ====== Helper logic ======
 
   int _computeClickPhase(int manualClicks) {
     double scaling_factor = 1.1;
@@ -1346,9 +1474,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   }
 
   double _currentOrePerClickForDisplay() {
-    // If we're not in gold mode, ore-per-click isn't used, but we still
-    // compute it so the logic remains consistent.
-    return _computeOrePerClick();
+    return _computeOrePerClick(now: DateTime.now());
   }
 
   void _activateFrenzy() {
@@ -1359,10 +1485,8 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     _saveProgress();
   }
 
-  // ====== ROCK INTERACTION LOGIC ======
-
   void _onRockPanDown(DragDownDetails details) {
-    if (_gameMode != 'gold') return; // no clicking in antimatter mode
+    if (_gameMode != 'gold') return;
     _handleRockPress(details.localPosition);
   }
 
@@ -1382,10 +1506,10 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   }
 
   void _handleRockPress(Offset localPosition) {
-    // Remember where the press started for drag calculations.
     _rockPressLocalPosition = localPosition;
 
     final now = DateTime.now();
+
     if (_lastClickTime == null ||
         now.difference(_lastClickTime!) > const Duration(seconds: 10)) {
       _momentumClicks = 0;
@@ -1398,38 +1522,35 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final double tapY = localPosition.dy.clamp(0.0, rockSize);
     final double center = rockSize / 2;
 
-    // Normalize to [-1, 1], where 0 is center.
-    final double normX = (tapX - center) / center; // left -1, right +1
-    final double normY = (tapY - center) / center; // top -1, bottom +1
+    final double normX = (tapX - center) / center;
+    final double normY = (tapY - center) / center;
 
     const double maxTilt = 4 * math.pi / 18;
 
-    // We want the rock to tilt *toward* the press.
     final double tiltX = normY * maxTilt;
     final double tiltY = -normX * maxTilt;
 
-    // Apply ore/sec -> ore/click transfer on every click.
-    // (Ore/sec cannot go below 0 in gold mode.)
     final double transfer = _orePerSecondTransfer;
-    final double nextOrePerSecond =
-    math.max(0.0, _orePerSecond - transfer);
+    final double nextOrePerSecond = math.max(0.0, _orePerSecond - transfer);
     final double nextBaseOrePerClick = _baseOrePerClick + transfer;
 
-    // Compute ore-per-click using the centralized formula,
-    // with manualClicks incremented by 1 for this press.
     final int clicksAfterThis =
         _manualClickCount + 1 * _manualClickPower * _clickMultiplicity.toInt();
 
-    // Temporarily compute using the "post-transfer" base values.
-    // We'll commit those values in setState below before applying gains.
-    // (This ensures the click benefits from the increased ore/click.)
     final double prevOrePerSecond = _orePerSecond;
     final double prevBaseOrePerClick = _baseOrePerClick;
+
     _orePerSecond = nextOrePerSecond;
     _baseOrePerClick = nextBaseOrePerClick;
-    final double orePerClick =
-    _computeOrePerClick(manualClicksOverride: clicksAfterThis);
-    // Restore immediately; setState will commit the real values.
+
+    final double orePerClick = _computeOrePerClick(
+      manualClicksOverride: clicksAfterThis,
+      now: now,
+      // Use the pre-update lastRockClickTime for the idle multiplier.
+      lastRockClickTimeOverride: _lastRockClickTime,
+      idleBoostOverride: _idleBoost,
+    );
+
     _orePerSecond = prevOrePerSecond;
     _baseOrePerClick = prevBaseOrePerClick;
 
@@ -1441,11 +1562,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _rockOffsetX = 0.0;
       _rockOffsetY = 0.0;
 
-      // Commit transfer.
       _orePerSecond = nextOrePerSecond;
       _baseOrePerClick = nextBaseOrePerClick;
 
-      // Game logic.
       _goldOre += orePerClick;
       _totalGoldOre += orePerClick;
       _lastComputedOrePerClick = orePerClick;
@@ -1453,9 +1572,11 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       _clicksThisRun += 1;
       _totalClicks += 1;
+
+      // NEW: update last rock click time for idle mechanic.
+      _lastRockClickTime = now;
     });
 
-    // Tutorial: ore changed due to a manual click.
     TutorialManager.instance
         .onGoldOreChanged(context, _manualClickCount.toDouble());
 
@@ -1489,8 +1610,8 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final double tapY = localPosition.dy.clamp(0.0, rockSize);
     final double center = rockSize / 2;
 
-    final double normX = (tapX - center) / center; // -1 to 1
-    final double normY = (tapY - center) / center; // -1 to 1
+    final double normX = (tapX - center) / center;
+    final double normY = (tapY - center) / center;
 
     const double maxTilt = 4 * math.pi / 18;
 
@@ -1528,7 +1649,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     });
   }
 
-  /// Called when a nugget is tapped.
   void _onNuggetTap(int id) {
     final index = _nuggets.indexWhere((n) => n.id == id);
     if (index == -1) return;
@@ -1541,7 +1661,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     }
 
     setState(() {
-      _gold += bonus; // grant refined gold (shared meta)
+      _gold += bonus;
       _nuggets.removeAt(index);
     });
 

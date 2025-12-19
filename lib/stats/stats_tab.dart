@@ -1,0 +1,524 @@
+// ===============================
+// stats/stats_tab.dart (FULL FILE)
+// ===============================
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../cards/player_collection_repository.dart';
+import '../cards/game_card_models.dart';
+import '../cards/card_catalog.dart';
+import '../utilities/display_functions.dart';
+
+/// Stats page UI extracted into its own file.
+///
+/// This version reads what it needs from SharedPreferences:
+/// - "Gold Mode" section uses the base keys (no prefix).
+/// - "Antimatter Mode" section uses the same keys prefixed with `antimatter_`.
+/// - Meta values are read from the global keys (no prefix).
+///
+/// It shows the SAME sections regardless of current mode:
+/// - Meta
+/// - Gold Mode
+/// - Antimatter Mode
+class StatsTab extends StatefulWidget {
+  const StatsTab({super.key});
+
+  @override
+  State<StatsTab> createState() => _StatsTabState();
+}
+
+// -------------------------
+// Key strings (MUST match idle_game_screen.dart)
+// -------------------------
+
+/// Shared/global keys
+const String kGoldKey = 'gold';
+const String kTotalRefinedGoldKey = 'total_refined_gold';
+const String kDarkMatterKey = 'dark_matter';
+const String kAchievementMultiplierKey = 'achievement_multiplier';
+const String kMaxGoldMultiplierKey = 'max_gold_multiplier';
+const String kTotalClicksKey = 'total_clicks';
+const String kTotalManualClickCyclesKey = 'total_manual_click_cycles';
+const String kMaxCardCountKey = 'max_card_count';
+
+/// Per-mode/per-run keys (base; antimatter uses prefix)
+const String kGoldOreKey = 'gold_ore';
+const String kTotalGoldOreKey = 'total_gold_ore';
+const String kOverallMultiplierKey = 'overall_multiplier';
+const String kClicksThisRunKey = 'clicks_this_run';
+const String kManualClickCyclesThisRunKey = 'manual_click_cycles_this_run';
+
+/// Antimatter per-mode keys (also stored per-mode; we access via prefix mapping)
+const String kAntimatterKey = 'antimatter';
+
+/// Mode prefix helper:
+/// - gold: baseKey
+/// - antimatter: 'antimatter_<baseKey>'
+String _modeKey(String baseKey, String mode) {
+  if (mode == 'antimatter') return 'antimatter_$baseKey';
+  return baseKey; // gold / default
+}
+
+/// Snapshot of stats values loaded from prefs.
+class _StatsSnapshot {
+  // Meta/global
+  final double totalRefinedGold;
+  final double darkMatterTotal;
+  final double achievementMultiplier;
+  final double maxGoldSingleRebirthValue;
+  final int totalClicksAllTime;
+  final double totalManualClickCyclesAllTime;
+  final int maxCardCount;
+
+  // Gold-mode (per-run/per-mode)
+  final double goldTotalOreThisRebirth;
+  final double goldOverallMultiplier;
+  final int goldClicksThisRun;
+  final double goldRefinedGoldFromNuggetsThisRun; // stored as manualClickCyclesThisRun
+
+  // Antimatter-mode (per-run/per-mode)
+  final double antiAntimatterCurrentRun;
+  final double antiOverallMultiplier;
+
+  const _StatsSnapshot({
+    required this.totalRefinedGold,
+    required this.darkMatterTotal,
+    required this.achievementMultiplier,
+    required this.maxGoldSingleRebirthValue,
+    required this.totalClicksAllTime,
+    required this.totalManualClickCyclesAllTime,
+    required this.maxCardCount,
+    required this.goldTotalOreThisRebirth,
+    required this.goldOverallMultiplier,
+    required this.goldClicksThisRun,
+    required this.goldRefinedGoldFromNuggetsThisRun,
+    required this.antiAntimatterCurrentRun,
+    required this.antiOverallMultiplier,
+  });
+}
+
+class _StatsTabState extends State<StatsTab> {
+  late Future<_StatsSnapshot> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadSnapshot();
+  }
+
+  Future<_StatsSnapshot> _loadSnapshot() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // ---- Meta/global ----
+    final totalRefinedGold = prefs.getDouble(kTotalRefinedGoldKey) ?? 0.0;
+    final darkMatterTotal = prefs.getDouble(kDarkMatterKey) ?? 0.0;
+    final achievementMultiplier = prefs.getDouble(kAchievementMultiplierKey) ?? 1.0;
+
+    // Misnamed in state: kMaxGoldMultiplierKey is actually "max gold (single rebirth)" value
+    final maxGoldSingleRebirthValue = prefs.getDouble(kMaxGoldMultiplierKey) ?? 1.0;
+
+    final totalClicksAllTime = prefs.getInt(kTotalClicksKey) ?? 0;
+    final totalManualClickCyclesAllTime = prefs.getDouble(kTotalManualClickCyclesKey) ?? 0.0;
+    final maxCardCount = prefs.getInt(kMaxCardCountKey) ?? 0;
+
+    // ---- Gold mode (base keys) ----
+    const goldMode = 'gold';
+    final goldTotalOreThisRebirth = prefs.getDouble(_modeKey(kTotalGoldOreKey, goldMode)) ?? 0.0;
+    final goldOverallMultiplier = prefs.getDouble(_modeKey(kOverallMultiplierKey, goldMode)) ?? 1.0;
+    final goldClicksThisRun = prefs.getInt(_modeKey(kClicksThisRunKey, goldMode)) ?? 0;
+
+    // This is your repurposed stat: refined gold from nuggets this run
+    final goldRefinedGoldFromNuggetsThisRun =
+        prefs.getDouble(_modeKey(kManualClickCyclesThisRunKey, goldMode)) ?? 0.0;
+
+    // ---- Antimatter mode (prefixed keys) ----
+    const antiMode = 'antimatter';
+    final antiAntimatterCurrentRun = prefs.getDouble(_modeKey(kAntimatterKey, antiMode)) ?? 0.0;
+    final antiOverallMultiplier = prefs.getDouble(_modeKey(kOverallMultiplierKey, antiMode)) ?? 1.0;
+
+    return _StatsSnapshot(
+      totalRefinedGold: totalRefinedGold,
+      darkMatterTotal: darkMatterTotal,
+      achievementMultiplier: achievementMultiplier,
+      maxGoldSingleRebirthValue: maxGoldSingleRebirthValue,
+      totalClicksAllTime: totalClicksAllTime,
+      totalManualClickCyclesAllTime: totalManualClickCyclesAllTime,
+      maxCardCount: maxCardCount,
+      goldTotalOreThisRebirth: goldTotalOreThisRebirth,
+      goldOverallMultiplier: goldOverallMultiplier,
+      goldClicksThisRun: goldClicksThisRun,
+      goldRefinedGoldFromNuggetsThisRun: goldRefinedGoldFromNuggetsThisRun,
+      antiAntimatterCurrentRun: antiAntimatterCurrentRun,
+      antiOverallMultiplier: antiOverallMultiplier,
+    );
+  }
+
+  // Best-effort extraction without assuming exact OwnedCard field names.
+  int _ownedCardLevel(OwnedCard c) {
+    try {
+      final d = c as dynamic;
+      final dynamic v = (d.level ?? d.cardLevel ?? d.upgradeLevel ?? d.count ?? 0);
+
+      if (v is int) return v;
+      if (v is double) return v.floor();
+      if (v is num) return v.toInt();
+      return 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  int _sumCardLevels(List<OwnedCard> cards) {
+    int sum = 0;
+    for (final c in cards) {
+      sum += _ownedCardLevel(c);
+    }
+    return sum;
+  }
+
+  int _maxCardLevel(List<OwnedCard> cards) {
+    int mx = 0;
+    for (final c in cards) {
+      mx = math.max(mx, _ownedCardLevel(c));
+    }
+    return mx;
+  }
+
+  Widget _sectionCard({
+    required String title,
+    required List<Widget> rows,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Colors.black.withOpacity(0.25),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                shadows: [
+                  Shadow(
+                    blurRadius: 4,
+                    color: Colors.black54,
+                    offset: Offset(1, 1),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...rows,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statRow({
+    required String label,
+    required String value,
+    bool isLast = false,
+    bool isIndented = false,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(left: isIndented ? 14.0 : 0),
+                  child: Text(
+                    label,
+                    softWrap: true,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: isIndented ? Colors.white70 : Colors.white,
+                      shadows: const [
+                        Shadow(
+                          blurRadius: 3,
+                          color: Colors.black54,
+                          offset: Offset(1, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 170),
+                child: Text(
+                  value,
+                  textAlign: TextAlign.right,
+                  softWrap: true,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                    shadows: [
+                      Shadow(
+                        blurRadius: 3,
+                        color: Colors.black54,
+                        offset: Offset(1, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!isLast) ...[
+            const SizedBox(height: 10),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: Colors.white.withOpacity(0.10),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  double _maxGoldDerivedMultiplier(double maxGoldSingleRebirth) {
+    final safe = maxGoldSingleRebirth <= 0 ? 1.0 : maxGoldSingleRebirth;
+    return 1.0 + (math.log(safe) / math.log(1000.0));
+  }
+
+  double _chronoEpochMultiplier({
+    required double overall,
+    required double achievement,
+    required double maxGoldDerived,
+  }) {
+    final denom = (achievement <= 0 ? 1.0 : achievement) * (maxGoldDerived <= 0 ? 1.0 : maxGoldDerived);
+    if (denom == 0) return overall;
+    return overall / denom;
+  }
+
+  int _nuggetsFoundThisRunFromRefinedGold(double refinedGoldFromNuggets) {
+    final x = refinedGoldFromNuggets.isFinite ? refinedGoldFromNuggets : 0.0;
+    final safe = x < 0 ? 0.0 : x;
+    return math.sqrt(safe * 2.0).floor();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Cards are not in prefs; they live in the repository.
+    final List<OwnedCard> ownedCards = PlayerCollectionRepository.instance.allOwnedCards;
+
+    final int totalCardLevels = _sumCardLevels(ownedCards);
+    final int maxCardLevel = _maxCardLevel(ownedCards);
+
+    final int ownedCount = ownedCards.length;
+    final int totalGameCards = CardCatalog.allCards.length;
+
+    final String ownedFraction = '$ownedCount / $totalGameCards';
+    final String ownedPercent = totalGameCards == 0
+        ? '—'
+        : '${(ownedCount / totalGameCards * 100).toStringAsFixed(1)}%';
+
+    return FutureBuilder<_StatsSnapshot>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const SafeArea(
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (!snap.hasData) {
+          return SafeArea(
+            child: Center(
+              child: Text(
+                'Failed to load stats.',
+                style: TextStyle(color: Colors.white.withOpacity(0.9)),
+              ),
+            ),
+          );
+        }
+
+        final s = snap.data!;
+
+        // Gold-derived multipliers (based on the "max gold single rebirth" value)
+        final double maxGoldSingleRebirth = s.maxGoldSingleRebirthValue;
+        final double maxGoldMultDerived = _maxGoldDerivedMultiplier(maxGoldSingleRebirth);
+
+        final double chronoEpochGold = _chronoEpochMultiplier(
+          overall: s.goldOverallMultiplier,
+          achievement: s.achievementMultiplier,
+          maxGoldDerived: maxGoldMultDerived,
+        );
+
+        final double chronoEpochAnti = _chronoEpochMultiplier(
+          overall: s.antiOverallMultiplier,
+          achievement: s.achievementMultiplier,
+          maxGoldDerived: maxGoldMultDerived,
+        );
+
+        // Nuggets per your rules:
+        // refinedGoldFromNuggetsThisRun is stored in manual_click_cycles_this_run (gold mode).
+        // nuggetsFound = floor(sqrt(2 * refinedGold))
+        final double refinedGoldFromNuggetsThisRun = s.goldRefinedGoldFromNuggetsThisRun;
+        final int nuggetsFoundThisRun = _nuggetsFoundThisRunFromRefinedGold(refinedGoldFromNuggetsThisRun);
+
+        final String antimatterDisplay = factorialDisplay(s.antiAntimatterCurrentRun);
+
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _sectionCard(
+                  title: 'Meta',
+                  rows: [
+                    _statRow(
+                      label: 'Total refined gold',
+                      value: displayNumber(s.totalRefinedGold),
+                    ),
+                    _statRow(
+                      label: 'Total dark matter',
+                      value: displayNumber(s.darkMatterTotal),
+                    ),
+                    _statRow(
+                      label: 'Owned cards',
+                      value: '$ownedFraction  ($ownedPercent)',
+                    ),
+                    _statRow(
+                      label: 'Total card levels',
+                      value: totalCardLevels.toString(),
+                    ),
+                    _statRow(
+                      label: 'Max card level',
+                      value: maxCardLevel.toString(),
+                    ),
+                    _statRow(
+                      label: 'Max card count (any single card)',
+                      value: s.maxCardCount.toString(),
+                    ),
+                    _statRow(
+                      label: 'Total manual click cycles (all time)',
+                      value: displayNumber(s.totalManualClickCyclesAllTime),
+                    ),
+                    _statRow(
+                      label: 'Clicks (all time)',
+                      value: s.totalClicksAllTime.toString(),
+                      isLast: true,
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+                _sectionCard(
+                  title: 'Gold Mode',
+                  rows: [
+                    _statRow(
+                      label: 'Total ore this rebirth',
+                      value: displayNumber(s.goldTotalOreThisRebirth),
+                    ),
+                    _statRow(
+                      label: 'from clicks',
+                      value: 'TBD',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'from tics',
+                      value: 'TBD',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Current ore multiplier',
+                      value: 'x${s.goldOverallMultiplier.toStringAsFixed(2)}',
+                    ),
+                    _statRow(
+                      label: 'Achievement multiplier',
+                      value: 'x${s.achievementMultiplier.toStringAsFixed(2)}',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Max gold multiplier',
+                      value: 'x${maxGoldMultDerived.toStringAsFixed(2)}',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Chrono Epoch multiplier',
+                      value: 'x${chronoEpochGold.toStringAsFixed(2)}',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Max gold (single rebirth)',
+                      value: displayNumber(maxGoldSingleRebirth),
+                    ),
+                    _statRow(
+                      label: 'Nuggets found (this run)',
+                      value: nuggetsFoundThisRun.toString(),
+                    ),
+                    _statRow(
+                      label: 'Refined gold from nuggets (this run)',
+                      value: displayNumber(refinedGoldFromNuggetsThisRun),
+                    ),
+                    _statRow(
+                      label: 'Clicks (this run)',
+                      value: s.goldClicksThisRun.toString(),
+                      isLast: true,
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+                _sectionCard(
+                  title: 'Antimatter Mode',
+                  rows: [
+                    _statRow(
+                      label: 'Antimatter (this run)',
+                      value: antimatterDisplay,
+                    ),
+                    _statRow(
+                      label: 'Current antimatter multiplier',
+                      value: 'x${s.antiOverallMultiplier.toStringAsFixed(2)}',
+                    ),
+                    _statRow(
+                      label: 'Achievement multiplier',
+                      value: 'x${s.achievementMultiplier.toStringAsFixed(2)}',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Max gold multiplier',
+                      value: 'x${maxGoldMultDerived.toStringAsFixed(2)}',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Chrono Epoch multiplier',
+                      value: 'x${chronoEpochAnti.toStringAsFixed(2)}',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Max dark matter (single rebirth)',
+                      value: 'TBD',
+                      isLast: true,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Convenience helper so the caller can keep using the old build* style if desired.
+/// Now it does NOT require passing anything.
+Widget buildStatsTabFromState() => const StatsTab();
