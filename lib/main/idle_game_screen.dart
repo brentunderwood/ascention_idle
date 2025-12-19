@@ -8,19 +8,24 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'alerts.dart';
-import 'rebirth/rebirth_screen.dart';
-import 'cards/player_collection_repository.dart';
-import 'cards/game_card_models.dart';
-import 'upgrades_screen.dart';
-import 'rebirth/achievements_catalog.dart';
-import 'misc_tab.dart'; // misc tab split into its own file
-import 'stats/stats_tab.dart'; // ✅ Stats reads from SharedPreferences now
-import 'tutorial_manager.dart'; // tutorial logic
-import 'utilities/display_functions.dart'; // numeric display helpers
+import '../utilities/alerts.dart';
+import '../rebirth/rebirth_screen.dart';
+import '../cards/player_collection_repository.dart';
+import '../cards/game_card_models.dart';
+import '../upgrades_screen.dart';
+import '../rebirth/achievements_catalog.dart';
+import '../misc_tab.dart'; // misc tab split into its own file
+import '../stats/stats_tab.dart'; // ✅ Stats reads from SharedPreferences now
+import '../tutorial_manager.dart'; // tutorial logic
+import '../utilities/display_functions.dart'; // numeric display helpers
 
 part 'idle_game_state.dart';
 part 'idle_game_state_accessors.dart';
+
+// ✅ NEW: split-out logic files
+part 'idle_game_gold.dart';
+part 'idle_game_antimatter.dart';
+part 'idle_game_rebirth.dart';
 
 /// Background assets for each game mode.
 const String kGameBackgroundAsset =
@@ -86,8 +91,7 @@ const String kAchievementMultiplierKey = 'achievement_multiplier';
 
 /// Random nugget spawn persistence keys.
 const String kRandomSpawnChanceKey = 'random_spawn_chance';
-const String kBonusRebirthGoldFromNuggetsKey =
-    'bonus_rebirth_gold_from_nuggets';
+const String kBonusRebirthGoldFromNuggetsKey = 'bonus_rebirth_gold_from_nuggets';
 
 /// Antimatter-related keys (per-mode).
 const String kAntimatterKey = 'antimatter';
@@ -122,6 +126,157 @@ class IdleGameScreen extends StatefulWidget {
   State<IdleGameScreen> createState() => _IdleGameScreenState();
 }
 
+/// ============================================
+/// ROCK DISPLAY + GESTURE / VISUALS (MOVED HERE)
+/// ============================================
+mixin RockDisplayMixin on State<IdleGameScreen> {
+  /// Animation state for the rock (3D-ish tilt).
+  double _rockScale = 1.0;
+  double _rockTiltX = 0.0; // tilt forward/back (based on vertical tap)
+  double _rockTiltY = 0.0; // tilt left/right (based on horizontal tap)
+
+  /// Small positional offset so the rock can "drag" a bit under the finger.
+  double _rockOffsetX = 0.0;
+  double _rockOffsetY = 0.0;
+
+  /// Where the initial press happened within the rock, used to compute drag delta.
+  Offset? _rockPressLocalPosition;
+
+  void resetRockVisuals() {
+    if (!mounted) return;
+    setState(() {
+      _rockScale = 1.0;
+      _rockTiltX = 0.0;
+      _rockTiltY = 0.0;
+      _rockOffsetX = 0.0;
+      _rockOffsetY = 0.0;
+      _rockPressLocalPosition = null;
+    });
+  }
+
+  void _onRockPanDown(DragDownDetails details) {
+    final state = this as _IdleGameScreenState;
+    if (state._gameMode != 'gold') return;
+    _handleRockPress(details.localPosition);
+  }
+
+  void _onRockPanUpdate(DragUpdateDetails details) {
+    final state = this as _IdleGameScreenState;
+    if (state._gameMode != 'gold') return;
+    _updateRockTiltAndOffset(details.localPosition);
+  }
+
+  void _onRockPanEnd(DragEndDetails details) {
+    final state = this as _IdleGameScreenState;
+    if (state._gameMode != 'gold') return;
+    _resetRockTransform();
+  }
+
+  void _onRockPanCancel() {
+    final state = this as _IdleGameScreenState;
+    if (state._gameMode != 'gold') return;
+    _resetRockTransform();
+  }
+
+  void _handleRockPress(Offset localPosition) {
+    final state = this as _IdleGameScreenState;
+
+    _rockPressLocalPosition = localPosition;
+    final now = DateTime.now();
+
+    const double rockSize = 440.0;
+    final double tapX = localPosition.dx.clamp(0.0, rockSize);
+    final double tapY = localPosition.dy.clamp(0.0, rockSize);
+    final double center = rockSize / 2;
+
+    final double normX = (tapX - center) / center;
+    final double normY = (tapY - center) / center;
+
+    const double maxTilt = 4 * math.pi / 18;
+    final double tiltX = normY * maxTilt;
+    final double tiltY = -normX * maxTilt;
+
+    // Visual update only.
+    setState(() {
+      _rockScale = 0.9;
+      _rockTiltX = tiltX;
+      _rockTiltY = tiltY;
+
+      _rockOffsetX = 0.0;
+      _rockOffsetY = 0.0;
+    });
+
+    // Economy/state update (no visuals) lives in idle_game_gold.dart now.
+    state._performRockClickEconomy(nowOverride: now);
+  }
+
+  void _updateRockTiltAndOffset(Offset localPosition) {
+    if (_rockPressLocalPosition == null) {
+      const double rockSize = 440.0;
+      final double tapX = localPosition.dx.clamp(0.0, rockSize);
+      final double tapY = localPosition.dy.clamp(0.0, rockSize);
+      final double center = rockSize / 2;
+
+      final double normX = (tapX - center) / center;
+      final double normY = (tapY - center) / center;
+
+      const double maxTilt = 4 * math.pi / 18;
+
+      setState(() {
+        _rockScale = 0.9;
+        _rockTiltX = normY * maxTilt;
+        _rockTiltY = -normX * maxTilt;
+        _rockOffsetX = 0.0;
+        _rockOffsetY = 0.0;
+      });
+      return;
+    }
+
+    const double rockSize = 440.0;
+    final double tapX = localPosition.dx.clamp(0.0, rockSize);
+    final double tapY = localPosition.dy.clamp(0.0, rockSize);
+    final double center = rockSize / 2;
+
+    final double normX = (tapX - center) / center;
+    final double normY = (tapY - center) / center;
+
+    const double maxTilt = 4 * math.pi / 18;
+
+    final double tiltX = normY * maxTilt;
+    final double tiltY = -normX * maxTilt;
+
+    const double dragFactor = 0.2;
+    const double maxOffset = 200.0;
+
+    final Offset delta = localPosition - _rockPressLocalPosition!;
+    double offsetX = delta.dx * dragFactor;
+    double offsetY = delta.dy * dragFactor;
+
+    offsetX = offsetX.clamp(-maxOffset, maxOffset);
+    offsetY = offsetY.clamp(-maxOffset, maxOffset);
+
+    setState(() {
+      _rockScale = 0.9;
+      _rockTiltX = tiltX;
+      _rockTiltY = tiltY;
+      _rockOffsetX = offsetX;
+      _rockOffsetY = offsetY;
+    });
+  }
+
+  void _resetRockTransform() {
+    if (!mounted) return;
+    setState(() {
+      _rockScale = 1.0;
+      _rockTiltX = 0.0;
+      _rockTiltY = 0.0;
+      _rockOffsetX = 0.0;
+      _rockOffsetY = 0.0;
+      _rockPressLocalPosition = null;
+    });
+  }
+}
+
 /// =======================
 /// UI HELPERS (WIDGETS)
 /// =======================
@@ -131,9 +286,8 @@ Widget buildIdleGameScaffold(
     BuildContext context,
     ) {
   // Pick background based on current game mode.
-  final String backgroundAsset = state._gameMode == 'antimatter'
-      ? kAntimatterBackgroundAsset
-      : kGameBackgroundAsset;
+  final String backgroundAsset =
+  state._gameMode == 'antimatter' ? kAntimatterBackgroundAsset : kGameBackgroundAsset;
 
   return Scaffold(
     // Transparent so background image shows fully.
@@ -379,8 +533,7 @@ Widget buildFrenzyButton(_IdleGameScreenState state) {
       label = 'Frenzy active: ${secs}s left';
       onPressed = null;
     } else {
-      final double remainingCooldown =
-          state._spellFrenzyCooldownSeconds - elapsedSeconds;
+      final double remainingCooldown = state._spellFrenzyCooldownSeconds - elapsedSeconds;
       if (remainingCooldown <= 0) {
         label = 'Cast Frenzy';
         onPressed = state._activateFrenzy;
@@ -488,8 +641,7 @@ Widget buildMainTab(_IdleGameScreenState state) {
   final int phase = state._currentClickPhase();
 
   // Image changes with phase: rock_0x.png where x is the phase (1–9).
-  final String rockAssetPath =
-      'assets/click_screen_art/gold_mining/rock_0$phase.png';
+  final String rockAssetPath = 'assets/click_screen_art/gold_mining/rock_0$phase.png';
 
   // Optional phase-9 banner text above the rock.
   final Widget phaseBanner = (phase == 9 && state._gameMode == 'gold')
@@ -521,11 +673,9 @@ Widget buildMainTab(_IdleGameScreenState state) {
   if (isAntimatterMode) {
     // Pending dark matter reward is the amount that will be gained on rebirth.
     final double pendingDarkMatter = state._pendingDarkMatter;
-    rebirthButtonLabel =
-    'Rebirth and gain ${displayNumber(pendingDarkMatter)} dark matter';
+    rebirthButtonLabel = 'Rebirth and gain ${displayNumber(pendingDarkMatter)} dark matter';
   } else {
-    rebirthButtonLabel =
-    'Rebirth and gain ${rebirthGold.toStringAsFixed(0)} gold';
+    rebirthButtonLabel = 'Rebirth and gain ${rebirthGold.toStringAsFixed(0)} gold';
   }
 
   // Column fills the available height in the main tab.

@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Definition model for a "Next Run" game mode option.
 class _ActivityOption {
-  final String id; // 'gold' or 'antimatter'
+  final String id; // 'gold', 'antimatter', 'monster'
   final String name;
   final String description;
   final IconData icon;
@@ -53,6 +53,15 @@ class _ActivityTabState extends State<ActivityTab> {
       lockedByDefault: true,
       unlockCost: 100,
     ),
+    _ActivityOption(
+      id: 'monster',
+      name: 'Hunt Monsters',
+      description:
+      'Descend into dangerous depths to hunt powerful monsters, demons, and aberrations.',
+      icon: Icons.shield,
+      lockedByDefault: true,
+      unlockCost: 1000,
+    ),
   ];
 
   static const String _selectedKey = 'next_run_selected_option';
@@ -74,8 +83,7 @@ class _ActivityTabState extends State<ActivityTab> {
       final key = _unlockKey(opt.id);
       bool? stored = prefs.getBool(key);
 
-      // Backwards compatibility for antimatter unlock:
-      // old key: 'next_run_create_antimatter_unlocked'
+      // Backwards compatibility for antimatter unlock
       if (stored == null && opt.id == 'antimatter') {
         stored = prefs.getBool('next_run_create_antimatter_unlocked');
       }
@@ -87,13 +95,10 @@ class _ActivityTabState extends State<ActivityTab> {
       }
     }
 
-    // Load selected option.
-    //
-    // Backwards compatibility:
-    //   'mine_gold'         -> 'gold'
-    //   'create_antimatter' -> 'antimatter'
+    // Load selected option (with legacy mapping)
     final storedSelected = prefs.getString(_selectedKey);
     String resolvedSelected;
+
     if (storedSelected == 'mine_gold') {
       resolvedSelected = 'gold';
     } else if (storedSelected == 'create_antimatter') {
@@ -106,8 +111,6 @@ class _ActivityTabState extends State<ActivityTab> {
     }
 
     _selectedId = resolvedSelected;
-
-    // Persist back in normalized form.
     await prefs.setString(_selectedKey, resolvedSelected);
 
     setState(() {
@@ -117,26 +120,24 @@ class _ActivityTabState extends State<ActivityTab> {
 
   String _unlockKey(String id) => 'next_run_${id}_unlocked';
 
+  bool _isUnlocked(String id) {
+    return _unlocked[id] ?? false;
+  }
+
   Future<void> _selectOption(_ActivityOption option) async {
     if (!_isUnlocked(option.id)) return;
 
     setState(() {
-      _selectedId = option.id; // 'gold' or 'antimatter'
+      _selectedId = option.id;
     });
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_selectedKey, option.id);
   }
 
-  bool _isUnlocked(String id) {
-    return _unlocked[id] ?? false;
-  }
-
   Future<void> _unlockOption(_ActivityOption option) async {
     if (_isUnlocked(option.id)) return;
-    if (widget.currentGold < option.unlockCost) {
-      return;
-    }
+    if (widget.currentGold < option.unlockCost) return;
 
     setState(() {
       _unlocked[option.id] = true;
@@ -144,17 +145,14 @@ class _ActivityTabState extends State<ActivityTab> {
     });
 
     final prefs = await SharedPreferences.getInstance();
-    final key = _unlockKey(option.id);
-    await prefs.setBool(key, true);
+    await prefs.setBool(_unlockKey(option.id), true);
 
-    // Also write the old antimatter key for backwards compatibility if needed.
+    // Legacy antimatter compatibility
     if (option.id == 'antimatter') {
       await prefs.setBool('next_run_create_antimatter_unlocked', true);
     }
 
     await prefs.setString(_selectedKey, _selectedId!);
-
-    // Spend refined gold via callback
     widget.onSpendGold(option.unlockCost.toDouble());
   }
 
@@ -196,16 +194,12 @@ class _ActivityTabState extends State<ActivityTab> {
                   ),
                   child: Stack(
                     children: [
-                      // Base content
                       Padding(
                         padding: const EdgeInsets.all(12.0),
                         child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // Icon
                             Padding(
-                              padding:
-                              const EdgeInsets.only(right: 8.0),
+                              padding: const EdgeInsets.only(right: 8.0),
                               child: Icon(
                                 opt.icon,
                                 size: 32,
@@ -216,12 +210,9 @@ class _ActivityTabState extends State<ActivityTab> {
                                     : Colors.grey.shade500,
                               ),
                             ),
-
-                            // Title + description
                             Expanded(
                               child: Column(
-                                crossAxisAlignment:
-                                CrossAxisAlignment.start,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
                                     opt.name,
@@ -239,8 +230,8 @@ class _ActivityTabState extends State<ActivityTab> {
                                       color: Colors.grey.shade200,
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  if (isSelected && unlocked)
+                                  if (isSelected && unlocked) ...[
+                                    const SizedBox(height: 4),
                                     Text(
                                       'Selected game mode: ${opt.id}',
                                       style: TextStyle(
@@ -249,13 +240,10 @@ class _ActivityTabState extends State<ActivityTab> {
                                             .withOpacity(0.9),
                                       ),
                                     ),
+                                  ],
                                 ],
                               ),
                             ),
-
-                            const SizedBox(width: 8),
-
-                            // Info button
                             IconButton(
                               icon: const Icon(
                                 Icons.info_outline,
@@ -288,14 +276,12 @@ class _ActivityTabState extends State<ActivityTab> {
                         ),
                       ),
 
-                      // Locked overlay
                       if (!unlocked)
                         Positioned.fill(
                           child: Container(
                             decoration: BoxDecoration(
                               color: Colors.black.withOpacity(0.80),
-                              borderRadius:
-                              BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             child: Center(
                               child: Column(
@@ -318,8 +304,8 @@ class _ActivityTabState extends State<ActivityTab> {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(
                                           const SnackBar(
-                                            content: Text(
-                                                'Not enough gold'),
+                                            content:
+                                            Text('Not enough gold'),
                                             duration:
                                             Duration(seconds: 2),
                                           ),

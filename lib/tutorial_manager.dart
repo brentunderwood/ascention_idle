@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'alerts.dart';
+import 'utilities/alerts.dart';
 import 'cards/player_collection_repository.dart';
 
 /// Centralized tutorial manager.

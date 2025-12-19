@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'idle_game_screen.dart';
+import 'main/idle_game_screen.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
