@@ -32,10 +32,31 @@ const String kMonsterNameKey = 'monster_name';
 const String kMonsterImagePathKey = 'monster_image_path';
 
 /// Monster combat selection (set via Upgrades tab)
-const String kMonsterAttackModeKey = 'monster_attack_mode'; // "head","body","hyde","aura"
+const String kMonsterAttackModeKey =
+    'monster_attack_mode'; // "head","body","hyde","aura"
+
+/// ✅ NEW: gate rage gains until monster mode is unlocked at least once.
+const String kMonsterUnlockedKey = 'monster_unlocked';
 
 mixin IdleGameMonsterMixin on State<IdleGameScreen> {
   _IdleGameScreenState get _s => this as _IdleGameScreenState;
+
+  // -----------------------
+  // Unlock gate
+  // -----------------------
+  bool _isMonsterUnlockedSync() {
+    final prefs = _s._prefs;
+    if (prefs == null) return false;
+    return prefs.getBool(kMonsterUnlockedKey) ?? false;
+  }
+
+  Future<void> _setMonsterUnlocked() async {
+    _s._prefs ??= await SharedPreferences.getInstance();
+    final prefs = _s._prefs!;
+    if (!(prefs.getBool(kMonsterUnlockedKey) ?? false)) {
+      await prefs.setBool(kMonsterUnlockedKey, true);
+    }
+  }
 
   // -----------------------
   // Tactic sync (prefs -> memory)
@@ -91,6 +112,10 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
   void ensureMonsterInitialized() {
     if (_s._gameMode != 'monster') return;
 
+    // ✅ entering monster mode unlocks it
+    // ignore: unawaited_futures
+    _setMonsterUnlocked();
+
     _syncAttackModeFromPrefs();
 
     final bool missing = _s._monsterClassRaw.isEmpty || _s._monsterBaseHp <= 0.0;
@@ -100,18 +125,23 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
 
     if (_s._monsterAttackMode.isEmpty) {
       _s._monsterAttackMode = 'head';
+      // ignore: unawaited_futures
       _persistAttackMode('head');
     }
   }
 
   // -----------------------
-  // Rage bump from GOLD rock taps (works in any mode)
+  // Rage bump from GOLD rock taps (works in any mode, but ONLY if unlocked)
   // -----------------------
   Future<void> bumpMonsterRageFromGoldTap() async {
     _s._prefs ??= await SharedPreferences.getInstance();
 
+    // ✅ Gate: do nothing until monster mode has been unlocked at least once.
+    if (!(_s._prefs!.getBool(kMonsterUnlockedKey) ?? false)) return;
+
     final String levelKey = kMonsterPlayerLevelKey;
-    final String rageKey = kMonsterPlayerRangeKey;
+    final String rageKeyLegacy = kMonsterPlayerRangeKey; // unprefixed legacy
+    final String rageKeyMonster = _modeKey(kMonsterPlayerRangeKey, 'monster'); // preferred
 
     final int level =
     (_s._prefs!.getInt(levelKey) ?? _s._monsterPlayerLevel).clamp(1, 1 << 30);
@@ -119,12 +149,15 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
     final double delta = (level * level).toDouble();
     if (delta <= 0) return;
 
-    final double currentRage =
-        _s._prefs!.getDouble(rageKey) ?? _s._monsterPlayerRage;
+    final double currentRage = _s._prefs!.getDouble(rageKeyMonster) ??
+        _s._prefs!.getDouble(rageKeyLegacy) ??
+        _s._monsterPlayerRage;
 
     final double newRage = math.max(1.0, currentRage + delta);
 
-    await _s._prefs!.setDouble(rageKey, newRage);
+    // ✅ Persist both (preferred + legacy) so reads never drift.
+    await _s._prefs!.setDouble(rageKeyMonster, newRage);
+    await _s._prefs!.setDouble(rageKeyLegacy, newRage);
 
     if (_s.mounted) {
       _s.setState(() {
@@ -221,7 +254,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
   bool get isMonsterDefeated => _s._monsterCurrentHp <= 0;
 
   double get monsterGoldReward {
-    return 100.0 *
+    return 10.0 *
         _s._monsterStatPoints.toDouble() *
         _s._monsterRarity.toDouble();
   }
@@ -271,8 +304,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
     final double curRegen = math.max(0.0, _s._monsterCurrentRegen);
     final double curAura = math.max(0.0, _s._monsterCurrentAura);
 
-    final String mode =
-    _s._monsterAttackMode.isEmpty ? 'head' : _s._monsterAttackMode;
+    final String mode = _s._monsterAttackMode.isEmpty ? 'head' : _s._monsterAttackMode;
 
     if (mode == 'head') {
       final double numerator = (atk * rage) - curDef;
@@ -297,8 +329,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
     if (mode == 'hyde') {
       final double delta = (atk * rage) / (1000.0 * rarity);
       if (delta <= 0) return;
-      _s._monsterCurrentDef =
-          (curDef - delta).clamp(0.0, _s._monsterBaseDef);
+      _s._monsterCurrentDef = (curDef - delta).clamp(0.0, _s._monsterBaseDef);
       return;
     }
 
@@ -315,8 +346,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
 
   void _clampMonsterCurrentStats() {
     _s._monsterCurrentHp = _s._monsterCurrentHp.clamp(0.0, _s._monsterBaseHp);
-    _s._monsterCurrentDef =
-        _s._monsterCurrentDef.clamp(0.0, _s._monsterBaseDef);
+    _s._monsterCurrentDef = _s._monsterCurrentDef.clamp(0.0, _s._monsterBaseDef);
     _s._monsterCurrentRegen =
         _s._monsterCurrentRegen.clamp(0.0, _s._monsterBaseRegen);
     _s._monsterCurrentAura =
@@ -326,9 +356,26 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
   // -----------------------
   // Slay
   // -----------------------
-  void slayBeastAndCollectReward() {
+  Future<void> slayBeastAndCollectReward() async {
     if (_s._gameMode != 'monster') return;
     if (_s._monsterCurrentHp > 0) return;
+
+    _s._prefs ??= await SharedPreferences.getInstance();
+
+    // ✅ Per-monster kill count (bestiary)
+    final MonsterClass cls = MonsterCatalog.classFromString(_s._monsterClassRaw);
+    final MonsterEntry? entry = MonsterCatalog.findBySnapshot(
+      cls: cls,
+      rarity: _s._monsterRarity,
+      name: _s._monsterName,
+      imagePath: _s._monsterImagePath,
+    );
+
+    if (entry != null) {
+      final String key = MonsterCatalog.killCountKeyForEntry(entry);
+      final int prev = _s._prefs!.getInt(key) ?? 0;
+      await _s._prefs!.setInt(key, prev + 1);
+    }
 
     final double goldReward = monsterGoldReward;
     final int expGained = _s._monsterStatPoints;
@@ -351,6 +398,8 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
         }
       }
 
+      // ✅ RESET RAGE ON REWARD COLLECTION
+      // Reset to the "base rage" for the new state (HunterLv^2).
       _s._monsterPlayerRage =
           (_s._monsterPlayerLevel * _s._monsterPlayerLevel).toDouble();
 
@@ -361,6 +410,12 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
       _s._monsterCurrentRegen = 0.0;
       _s._monsterCurrentAura = 0.0;
     });
+
+    // ✅ Persist the reset rage immediately (both keys).
+    final String rageKeyLegacy = kMonsterPlayerRangeKey;
+    final String rageKeyMonster = _modeKey(kMonsterPlayerRangeKey, 'monster');
+    await _s._prefs!.setDouble(rageKeyMonster, _s._monsterPlayerRage);
+    await _s._prefs!.setDouble(rageKeyLegacy, _s._monsterPlayerRage);
 
     _s._saveProgress();
     generateMonster();
@@ -376,8 +431,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
     final int exp = _s._monsterPlayerExperience;
     final int nextNeed = (lvl + 1) * (lvl + 1) * (lvl + 1);
 
-    final String clsRaw =
-    _s._monsterClassRaw.isEmpty ? 'Unknown' : _s._monsterClassRaw;
+    final String clsRaw = _s._monsterClassRaw.isEmpty ? 'Unknown' : _s._monsterClassRaw;
     final String cls = _capitalizeWords(clsRaw);
 
     final String name = _s._monsterName.isEmpty ? '???' : _s._monsterName;
@@ -445,8 +499,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
 
     final bool defeated = isMonsterDefeated;
 
-    final String clsRaw =
-    _s._monsterClassRaw.isEmpty ? 'Unknown' : _s._monsterClassRaw;
+    final String clsRaw = _s._monsterClassRaw.isEmpty ? 'Unknown' : _s._monsterClassRaw;
     final String cls = _capitalizeWords(clsRaw);
 
     final String name = _s._monsterName.isEmpty ? '???' : _s._monsterName;
@@ -476,7 +529,6 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
 
     return Column(
       children: [
-        // ✅ Monster name is above; art starts below it.
         Padding(
           padding: const EdgeInsets.only(top: 6),
           child: Text(
@@ -497,39 +549,33 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
           ),
         ),
         const SizedBox(height: 10),
-
-        // ✅ Monster takes maximum space without cropping.
-        // ✅ Bottom is allowed to extend slightly under the top of the info box.
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
               final double maxW = constraints.maxWidth;
               final double maxH = constraints.maxHeight;
 
-              // Overlay sizing stays as before.
               final double overlayMaxHeight =
               math.min(180.0, math.max(120.0, maxH * 0.38));
 
               final double safeBottom = MediaQuery.of(context).padding.bottom;
               const double overlayOuterPaddingBottom = 6;
 
-              // ✅ This is the key: allow art to underlap the info box a bit.
-              // "a few lines" ≈ 24–40px. Tune here if you want.
               const double artUnderlap = 34.0;
 
               final double reservedForOverlay = (!defeated
-                  ? (overlayMaxHeight + safeBottom + overlayOuterPaddingBottom - artUnderlap)
+                  ? (overlayMaxHeight +
+                  safeBottom +
+                  overlayOuterPaddingBottom -
+                  artUnderlap)
                   : 0.0);
 
               final double clampedReserve = math.max(0.0, reservedForOverlay);
 
-              // ✅ Art height becomes as large as possible within remaining space.
               final double artHeight = math.max(0.0, maxH - clampedReserve);
 
               return Stack(
                 children: [
-                  // Monster art fills from the top down to just above (and slightly under)
-                  // the top edge of the info box.
                   Positioned(
                     left: 0,
                     right: 0,
@@ -541,8 +587,6 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
                       child: art,
                     ),
                   ),
-
-                  // Bottom overlay pinned as low as possible.
                   if (!defeated)
                     Positioned(
                       left: 12,
@@ -554,7 +598,8 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
                         right: false,
                         bottom: true,
                         child: Padding(
-                          padding: const EdgeInsets.only(bottom: overlayOuterPaddingBottom),
+                          padding: const EdgeInsets.only(
+                              bottom: overlayOuterPaddingBottom),
                           child: _buildOverlayInfoPanel(
                             tactic: tactic,
                             rateNote: rateNote,
@@ -568,14 +613,13 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
             },
           ),
         ),
-
         if (defeated)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: slayBeastAndCollectReward,
+                onPressed: () => slayBeastAndCollectReward(),
                 child: Text(
                   'Slay the beast and collect ${displayNumber(monsterGoldReward)} gold',
                 ),
@@ -602,7 +646,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
     final String monsterLine1 =
         'HP ${displayNumber(_s._monsterCurrentHp)} / ${displayNumber(_s._monsterBaseHp)}';
     final String monsterLine2 =
-        'Def ${displayNumber(_s._monsterCurrentDef)} • Regen ${displayNumber(_s._monsterCurrentRegen)} • Aura $auraCur / $auraBase';
+        'Def ${displayNumber(_s._monsterCurrentDef)} • Regen ${displayNumber(_s._monsterCurrentRegen)} • Aura $auraCur';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -633,7 +677,6 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -660,19 +703,19 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
                   IconButton(
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+                    constraints:
+                    const BoxConstraints.tightFor(width: 28, height: 28),
                     tooltip: 'How monster hunting works',
-                    icon: const Icon(Icons.info_outline, size: 18, color: Colors.white70),
+                    icon: const Icon(Icons.info_outline,
+                        size: 18, color: Colors.white70),
                     onPressed: _showMonsterInfoDialog,
                   ),
                 ],
               ),
-
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Divider(color: Colors.white24, height: 1),
               ),
-
               Text(
                 'Monster • $monsterLine1',
                 style: TextStyle(
@@ -742,27 +785,53 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
 
   String _fmtAura(double v) => v.toStringAsFixed(2);
 
+  /// ✅ Net head-damage per second after subtracting current regen.
+  double _netHeadDamagePerSecondAfterRegen({
+    required double atk,
+    required double rage,
+    required double rarity,
+    required double curDef,
+    required double curAura,
+    required double curRegen,
+  }) {
+    final double numerator = (atk * rage) - curDef;
+    if (numerator <= 0) return 0.0;
+
+    final double denom = rarity * (1.0 + curAura);
+    if (denom <= 0) return 0.0;
+
+    final double dmgPerSec = numerator / denom;
+    final double net = dmgPerSec - curRegen;
+    return math.max(0.0, net);
+  }
+
   String _tacticRateNote() {
     final double atk = math.max(1.0, _s._monsterPlayerAttack.toDouble());
     final double rage = math.max(1.0, _s._monsterPlayerRage);
     final double rarity = math.max(1.0, _s._monsterRarity.toDouble());
 
     final double curDef = math.max(0.0, _s._monsterCurrentDef);
+    final double curRegen = math.max(0.0, _s._monsterCurrentRegen);
     final double curAura = math.max(0.0, _s._monsterCurrentAura);
 
     const double secondsPerDay = 86400.0;
 
-    final String mode =
-    _s._monsterAttackMode.isEmpty ? 'head' : _s._monsterAttackMode;
+    final String mode = _s._monsterAttackMode.isEmpty ? 'head' : _s._monsterAttackMode;
 
     if (mode == 'head') {
-      final double numerator = (atk * rage) - curDef;
-      if (numerator <= 0) return 'no damage at current stats';
-      final double denom = rarity * (1.0 + curAura);
-      final double dmgPerSec = denom <= 0 ? 0.0 : (numerator / denom);
-      final double dmgPerDay = math.max(0.0, dmgPerSec * secondsPerDay);
-      if (dmgPerDay <= 0) return 'no damage at current stats';
-      return 'dealing ~${displayNumber(dmgPerDay)} HP per day';
+      // ✅ Include regen: net HP change per day.
+      final double netPerSec = _netHeadDamagePerSecondAfterRegen(
+        atk: atk,
+        rage: rage,
+        rarity: rarity,
+        curDef: curDef,
+        curAura: curAura,
+        curRegen: curRegen,
+      );
+
+      if (netPerSec <= 0) return 'no net damage (Regen outheals)';
+      final double netPerDay = netPerSec * secondsPerDay;
+      return 'reducing ~${displayNumber(netPerDay)} HP per day (after Regen)';
     }
 
     if (mode == 'body') {
@@ -780,7 +849,21 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
     if (mode == 'aura') {
       final double deltaPerSec = (atk * rage) / (1000000.0 * rarity);
       final double deltaPerDay = math.max(0.0, deltaPerSec * secondsPerDay);
-      return 'reducing Aura by ~${displayNumber(deltaPerDay)} per day';
+
+      // ✅ Also show the *current* net head damage after Regen (what your HP DPS would be).
+      final double netHeadPerSecNow = _netHeadDamagePerSecondAfterRegen(
+        atk: atk,
+        rage: rage,
+        rarity: rarity,
+        curDef: curDef,
+        curAura: curAura,
+        curRegen: curRegen,
+      );
+      if (netHeadPerSecNow <= 0) {
+        return 'reducing Aura by ~${displayNumber(deltaPerDay)} per day • no net HP damage (after Regen)';
+      }
+      final double netHeadPerDayNow = netHeadPerSecNow * secondsPerDay;
+      return 'reducing Aura by ~${displayNumber(deltaPerDay)} per day • net HP ~${displayNumber(netHeadPerDayNow)}/day (after Regen)';
     }
 
     return 'changing over time';
@@ -812,8 +895,7 @@ mixin IdleGameMonsterMixin on State<IdleGameScreen> {
     }).join(' ');
   }
 
-  double _nextGaussian(math.Random rng,
-      {required double mean, required double stdDev}) {
+  double _nextGaussian(math.Random rng, {required double mean, required double stdDev}) {
     double u1 = rng.nextDouble();
     double u2 = rng.nextDouble();
     if (u1 < 1e-12) u1 = 1e-12;

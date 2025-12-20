@@ -27,15 +27,26 @@ const String kGoldKey = 'gold';
 const String kTotalRefinedGoldKey = 'total_refined_gold';
 const String kDarkMatterKey = 'dark_matter';
 const String kAchievementMultiplierKey = 'achievement_multiplier';
-const String kMaxGoldMultiplierKey = 'max_gold_multiplier';
 const String kTotalClicksKey = 'total_clicks';
 const String kTotalManualClickCyclesKey = 'total_manual_click_cycles';
 const String kMaxCardCountKey = 'max_card_count';
 
+/// ✅ NEW: maxGoldMultiplier renamed -> maxSingleRunGold (GLOBAL, not mode-dependent)
+const String kMaxSingleRunGoldKey = 'max_single_run_gold';
+
+/// Legacy fallback (older saves)
+const String kLegacyMaxGoldMultiplierKey = 'max_gold_multiplier';
+
 /// Per-mode/per-run keys (base; antimatter uses prefix)
 const String kGoldOreKey = 'gold_ore';
 const String kTotalGoldOreKey = 'total_gold_ore';
-const String kOverallMultiplierKey = 'overall_multiplier';
+
+/// ✅ NEW: overall multiplier renamed -> chrono_stepPmultiplier (per-mode; rebirth-only)
+const String kChronoStepPMultiplierKey = 'chrono_stepPmultiplier';
+
+/// Legacy fallback
+const String kLegacyOverallMultiplierKey = 'overall_multiplier';
+
 const String kClicksThisRunKey = 'clicks_this_run';
 const String kManualClickCyclesThisRunKey = 'manual_click_cycles_this_run';
 
@@ -60,7 +71,7 @@ class _StatsSnapshot {
   final double totalRefinedGold;
   final double darkMatterTotal;
   final double achievementMultiplier;
-  final double maxGoldSingleRebirthValue;
+  final double maxSingleRunGold;
   final int totalClicksAllTime;
   final double totalManualClickCyclesAllTime;
   final int maxCardCount;
@@ -72,19 +83,19 @@ class _StatsSnapshot {
 
   // Gold-mode (per-run/per-mode)
   final double goldTotalOreThisRebirth;
-  final double goldOverallMultiplier; // stored overall (without hunter boost)
+  final double goldChronoStepPMultiplier; // rebirth-only (stored)
   final int goldClicksThisRun;
   final double goldRefinedGoldFromNuggetsThisRun; // stored as manualClickCyclesThisRun
 
   // Antimatter-mode (per-run/per-mode)
   final double antiAntimatterCurrentRun;
-  final double antiOverallMultiplier; // stored overall (may historically include max-gold derived)
+  final double antiChronoStepPMultiplier; // rebirth-only (stored)
 
   const _StatsSnapshot({
     required this.totalRefinedGold,
     required this.darkMatterTotal,
     required this.achievementMultiplier,
-    required this.maxGoldSingleRebirthValue,
+    required this.maxSingleRunGold,
     required this.totalClicksAllTime,
     required this.totalManualClickCyclesAllTime,
     required this.maxCardCount,
@@ -92,16 +103,19 @@ class _StatsSnapshot {
     required this.hunterLevel,
     required this.hunterExp,
     required this.goldTotalOreThisRebirth,
-    required this.goldOverallMultiplier,
+    required this.goldChronoStepPMultiplier,
     required this.goldClicksThisRun,
     required this.goldRefinedGoldFromNuggetsThisRun,
     required this.antiAntimatterCurrentRun,
-    required this.antiOverallMultiplier,
+    required this.antiChronoStepPMultiplier,
   });
 }
 
 class _StatsTabState extends State<StatsTab> {
   late Future<_StatsSnapshot> _future;
+
+  /// Expand/collapse state for grouped rows
+  final Map<String, bool> _expanded = <String, bool>{};
 
   @override
   void initState() {
@@ -115,10 +129,15 @@ class _StatsTabState extends State<StatsTab> {
     // ---- Meta/global ----
     final totalRefinedGold = prefs.getDouble(kTotalRefinedGoldKey) ?? 0.0;
     final darkMatterTotal = prefs.getDouble(kDarkMatterKey) ?? 0.0;
-    final achievementMultiplier = prefs.getDouble(kAchievementMultiplierKey) ?? 1.0;
 
-    // Misnamed in state: kMaxGoldMultiplierKey is actually "max gold (single rebirth)" value
-    final maxGoldSingleRebirthValue = prefs.getDouble(kMaxGoldMultiplierKey) ?? 1.0;
+    // Achievement multiplier is GLOBAL (not mode-dependent)
+    final achievementMultiplier =
+        prefs.getDouble(kAchievementMultiplierKey) ?? 1.0;
+
+    // maxSingleRunGold is GLOBAL (not mode-dependent)
+    final maxSingleRunGold = prefs.getDouble(kMaxSingleRunGoldKey) ??
+        prefs.getDouble(kLegacyMaxGoldMultiplierKey) ??
+        1.0;
 
     final totalClicksAllTime = prefs.getInt(kTotalClicksKey) ?? 0;
     final totalManualClickCyclesAllTime =
@@ -134,26 +153,36 @@ class _StatsTabState extends State<StatsTab> {
     const goldMode = 'gold';
     final goldTotalOreThisRebirth =
         prefs.getDouble(_modeKey(kTotalGoldOreKey, goldMode)) ?? 0.0;
-    final goldOverallMultiplier =
-        prefs.getDouble(_modeKey(kOverallMultiplierKey, goldMode)) ?? 1.0;
-    final goldClicksThisRun = prefs.getInt(_modeKey(kClicksThisRunKey, goldMode)) ?? 0;
+
+    // chrono_stepPmultiplier (rebirth-only). Fallback to legacy overall.
+    final goldChronoStepPMultiplier =
+        prefs.getDouble(_modeKey(kChronoStepPMultiplierKey, goldMode)) ??
+            prefs.getDouble(_modeKey(kLegacyOverallMultiplierKey, goldMode)) ??
+            1.0;
+
+    final goldClicksThisRun =
+        prefs.getInt(_modeKey(kClicksThisRunKey, goldMode)) ?? 0;
 
     // Refined gold from nuggets this run is stored in manual_click_cycles_this_run
     final goldRefinedGoldFromNuggetsThisRun =
-        prefs.getDouble(_modeKey(kManualClickCyclesThisRunKey, goldMode)) ?? 0.0;
+        prefs.getDouble(_modeKey(kManualClickCyclesThisRunKey, goldMode)) ??
+            0.0;
 
     // ---- Antimatter mode (prefixed keys) ----
     const antiMode = 'antimatter';
     final antiAntimatterCurrentRun =
         prefs.getDouble(_modeKey(kAntimatterKey, antiMode)) ?? 0.0;
-    final antiOverallMultiplier =
-        prefs.getDouble(_modeKey(kOverallMultiplierKey, antiMode)) ?? 1.0;
+
+    final antiChronoStepPMultiplier =
+        prefs.getDouble(_modeKey(kChronoStepPMultiplierKey, antiMode)) ??
+            prefs.getDouble(_modeKey(kLegacyOverallMultiplierKey, antiMode)) ??
+            1.0;
 
     return _StatsSnapshot(
       totalRefinedGold: totalRefinedGold,
       darkMatterTotal: darkMatterTotal,
       achievementMultiplier: achievementMultiplier,
-      maxGoldSingleRebirthValue: maxGoldSingleRebirthValue,
+      maxSingleRunGold: maxSingleRunGold,
       totalClicksAllTime: totalClicksAllTime,
       totalManualClickCyclesAllTime: totalManualClickCyclesAllTime,
       maxCardCount: maxCardCount,
@@ -161,11 +190,11 @@ class _StatsTabState extends State<StatsTab> {
       hunterLevel: hunterLevel,
       hunterExp: hunterExp,
       goldTotalOreThisRebirth: goldTotalOreThisRebirth,
-      goldOverallMultiplier: goldOverallMultiplier,
+      goldChronoStepPMultiplier: goldChronoStepPMultiplier,
       goldClicksThisRun: goldClicksThisRun,
       goldRefinedGoldFromNuggetsThisRun: goldRefinedGoldFromNuggetsThisRun,
       antiAntimatterCurrentRun: antiAntimatterCurrentRun,
-      antiOverallMultiplier: antiOverallMultiplier,
+      antiChronoStepPMultiplier: antiChronoStepPMultiplier,
     );
   }
 
@@ -173,7 +202,8 @@ class _StatsTabState extends State<StatsTab> {
   int _ownedCardLevel(OwnedCard c) {
     try {
       final d = c as dynamic;
-      final dynamic v = (d.level ?? d.cardLevel ?? d.upgradeLevel ?? d.count ?? 0);
+      final dynamic v =
+      (d.level ?? d.cardLevel ?? d.upgradeLevel ?? d.count ?? 0);
 
       if (v is int) return v;
       if (v is double) return v.floor();
@@ -241,57 +271,75 @@ class _StatsTabState extends State<StatsTab> {
     required String value,
     bool isLast = false,
     bool isIndented = false,
+    Widget? trailing,
+    VoidCallback? onTap,
   }) {
-    return Padding(
+    final row = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(left: isIndented ? 14.0 : 0),
+            child: Text(
+              label,
+              softWrap: true,
+              style: TextStyle(
+                fontSize: 15,
+                color: isIndented ? Colors.white70 : Colors.white,
+                shadows: const [
+                  Shadow(
+                    blurRadius: 3,
+                    color: Colors.black54,
+                    offset: Offset(1, 1),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 170),
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            softWrap: true,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+              shadows: [
+                Shadow(
+                  blurRadius: 3,
+                  color: Colors.black54,
+                  offset: Offset(1, 1),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (trailing != null) ...[
+          const SizedBox(width: 8),
+          trailing,
+        ],
+      ],
+    );
+
+    final content = Padding(
       padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
       child: Column(
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(left: isIndented ? 14.0 : 0),
-                  child: Text(
-                    label,
-                    softWrap: true,
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: isIndented ? Colors.white70 : Colors.white,
-                      shadows: const [
-                        Shadow(
-                          blurRadius: 3,
-                          color: Colors.black54,
-                          offset: Offset(1, 1),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+          if (onTap != null)
+            InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2.0),
+                child: row,
               ),
-              const SizedBox(width: 10),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 170),
-                child: Text(
-                  value,
-                  textAlign: TextAlign.right,
-                  softWrap: true,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                    shadows: [
-                      Shadow(
-                        blurRadius: 3,
-                        color: Colors.black54,
-                        offset: Offset(1, 1),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+            )
+          else
+            row,
           if (!isLast) ...[
             const SizedBox(height: 10),
             Divider(
@@ -303,31 +351,67 @@ class _StatsTabState extends State<StatsTab> {
         ],
       ),
     );
+
+    return content;
   }
 
-  double _maxGoldDerivedMultiplier(double maxGoldSingleRebirth) {
-    final safe = maxGoldSingleRebirth <= 0 ? 1.0 : maxGoldSingleRebirth;
+  Widget _collapsibleGroup({
+    required String id,
+    required String label,
+    required String value,
+    required List<Widget> children,
+    required bool isLastInSection,
+  }) {
+    final bool expanded = _expanded[id] ?? false;
+
+    return Column(
+      children: [
+        _statRow(
+          label: label,
+          value: value,
+          // If expanded, we don't want the header to render the "end-of-row" divider,
+          // because we're about to render children under it.
+          isLast: expanded ? true : isLastInSection,
+          trailing: Icon(
+            expanded ? Icons.expand_less : Icons.expand_more,
+            color: Colors.white70,
+            size: 20,
+          ),
+          onTap: () {
+            setState(() {
+              _expanded[id] = !expanded;
+            });
+          },
+        ),
+        if (expanded) ...[
+          // Divider between header and first child (visual grouping)
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: Colors.white.withOpacity(0.10),
+          ),
+          const SizedBox(height: 10),
+          ...children,
+          // If the group is NOT the last thing in the section, add the section divider.
+          if (!isLastInSection) ...[
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: Colors.white.withOpacity(0.10),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ],
+      ],
+    );
+  }
+
+  /// ✅ "max gold multiplier" derived from maxSingleRunGold via log boost.
+  double _maxGoldSingleRunLogBoost(double maxSingleRunGold) {
+    final safe = (!maxSingleRunGold.isFinite || maxSingleRunGold <= 0)
+        ? 1.0
+        : maxSingleRunGold;
     return 1.0 + (math.log(safe) / math.log(1000.0));
-  }
-
-  double _chronoEpochMultiplierGold({
-    required double overallStored,
-    required double achievement,
-    required double maxGoldDerived,
-  }) {
-    final denom =
-        (achievement <= 0 ? 1.0 : achievement) * (maxGoldDerived <= 0 ? 1.0 : maxGoldDerived);
-    if (denom == 0) return overallStored;
-    return overallStored / denom;
-  }
-
-  double _chronoEpochMultiplierAntimatterNoMax({
-    required double overallNoMax,
-    required double achievement,
-  }) {
-    final denom = (achievement <= 0 ? 1.0 : achievement);
-    if (denom == 0) return overallNoMax;
-    return overallNoMax / denom;
   }
 
   double _monsterHunterGoldMult(int hunterLevel) {
@@ -336,8 +420,8 @@ class _StatsTabState extends State<StatsTab> {
   }
 
   double _monsterHunterAntimatterMult(int hunterLevel) {
-    final double L = math.max(1.0, hunterLevel.toDouble());
-    final double m = math.pow(L, math.log(L)).toDouble();
+    // As in your latest file: antimatter MH multiplier equals hunter level (min 1).
+    final double m = math.max(1.0, hunterLevel.toDouble());
     if (!m.isFinite || m <= 0) return 1.0;
     return m;
   }
@@ -386,42 +470,85 @@ class _StatsTabState extends State<StatsTab> {
 
         final s = snap.data!;
 
-        // Derived multipliers
-        final double maxGoldSingleRebirth = s.maxGoldSingleRebirthValue;
-        final double maxGoldMultDerived = _maxGoldDerivedMultiplier(maxGoldSingleRebirth);
+        // ---- Derived multipliers ----
+        final double maxLogBoost = _maxGoldSingleRunLogBoost(s.maxSingleRunGold);
 
-        final double hunterGoldMult = _monsterHunterGoldMult(s.hunterLevel);
-        final double hunterAntiMult = _monsterHunterAntimatterMult(s.hunterLevel);
+        final int hunterLvlSafe = (s.hunterLevel <= 0) ? 1 : s.hunterLevel;
+        final double hunterGoldMult = _monsterHunterGoldMult(hunterLvlSafe);
+        final double hunterAntiMult = _monsterHunterAntimatterMult(hunterLvlSafe);
 
-        // Gold: chrono epoch from stored overall (which is then boosted by hunter level in gameplay)
-        final double chronoEpochGold = _chronoEpochMultiplierGold(
-          overallStored: s.goldOverallMultiplier,
-          achievement: s.achievementMultiplier,
-          maxGoldDerived: maxGoldMultDerived,
-        );
-        final double goldOverallEffective = s.goldOverallMultiplier * hunterGoldMult;
+        // "Current ore multiplier" reflects computeCoreOreMultiplier().
+        final double coreOreMultGold = s.goldChronoStepPMultiplier *
+            s.achievementMultiplier *
+            maxLogBoost *
+            hunterGoldMult;
 
-        // Antimatter: remove max-gold-derived from the stored overall, then apply hunter formula
-        final double antiOverallNoMax =
-        (maxGoldMultDerived <= 0) ? s.antiOverallMultiplier : (s.antiOverallMultiplier / maxGoldMultDerived);
-
-        final double chronoEpochAnti = _chronoEpochMultiplierAntimatterNoMax(
-          overallNoMax: antiOverallNoMax,
-          achievement: s.achievementMultiplier,
-        );
-
-        final double antiOverallEffective = antiOverallNoMax * hunterAntiMult;
+        final double coreOreMultAnti = s.antiChronoStepPMultiplier *
+            s.achievementMultiplier *
+            maxLogBoost *
+            hunterAntiMult;
 
         // Nuggets
-        final double refinedGoldFromNuggetsThisRun = s.goldRefinedGoldFromNuggetsThisRun;
+        final double refinedGoldFromNuggetsThisRun =
+            s.goldRefinedGoldFromNuggetsThisRun;
         final int nuggetsFoundThisRun =
         _nuggetsFoundThisRunFromRefinedGold(refinedGoldFromNuggetsThisRun);
 
-        final String antimatterDisplay = factorialDisplay(s.antiAntimatterCurrentRun);
+        final String antimatterDisplay =
+        factorialDisplay(s.antiAntimatterCurrentRun);
 
         // Monster hunter EXP
-        final int hunterLvlSafe = (s.hunterLevel <= 0) ? 1 : s.hunterLevel;
-        final int expToNext = (hunterLvlSafe + 1) * (hunterLvlSafe + 1) * (hunterLvlSafe + 1);
+        final int expToNext =
+            (hunterLvlSafe + 1) * (hunterLvlSafe + 1) * (hunterLvlSafe + 1);
+
+        // ---- Collapsible children lists ----
+        final List<Widget> goldCoreChildren = [
+          _statRow(
+            label: 'Achievement multiplier',
+            value: 'x${s.achievementMultiplier.toStringAsFixed(2)}',
+            isIndented: true,
+          ),
+          _statRow(
+            label: 'Max gold multiplier',
+            value: 'x${maxLogBoost.toStringAsFixed(2)}',
+            isIndented: true,
+          ),
+          _statRow(
+            label: 'Small Step multiplier',
+            value: 'x${s.goldChronoStepPMultiplier.toStringAsFixed(2)}',
+            isIndented: true,
+          ),
+          _statRow(
+            label: 'Monster Hunter multiplier',
+            value: 'x${hunterGoldMult.toStringAsFixed(0)}',
+            isIndented: true,
+            isLast: true,
+          ),
+        ];
+
+        final List<Widget> antiCoreChildren = [
+          _statRow(
+            label: 'Achievement multiplier',
+            value: 'x${s.achievementMultiplier.toStringAsFixed(2)}',
+            isIndented: true,
+          ),
+          _statRow(
+            label: 'Max gold multiplier',
+            value: 'x${maxLogBoost.toStringAsFixed(2)}',
+            isIndented: true,
+          ),
+          _statRow(
+            label: 'Small Step multiplier',
+            value: 'x${s.antiChronoStepPMultiplier.toStringAsFixed(2)}',
+            isIndented: true,
+          ),
+          _statRow(
+            label: 'Monster Hunter multiplier',
+            value: 'x${hunterAntiMult.toStringAsFixed(2)}',
+            isIndented: true,
+            isLast: true,
+          ),
+        ];
 
         return SafeArea(
           child: SingleChildScrollView(
@@ -506,33 +633,19 @@ class _StatsTabState extends State<StatsTab> {
                       value: 'TBD',
                       isIndented: true,
                     ),
-                    _statRow(
+
+                    // ✅ Collapsible group
+                    _collapsibleGroup(
+                      id: 'gold_core_mult',
                       label: 'Current ore multiplier',
-                      value: 'x${goldOverallEffective.toStringAsFixed(2)}',
+                      value: 'x${coreOreMultGold.toStringAsFixed(2)}',
+                      children: goldCoreChildren,
+                      isLastInSection: false,
                     ),
+
                     _statRow(
-                      label: 'Achievement multiplier',
-                      value: 'x${s.achievementMultiplier.toStringAsFixed(2)}',
-                      isIndented: true,
-                    ),
-                    _statRow(
-                      label: 'Max gold multiplier',
-                      value: 'x${maxGoldMultDerived.toStringAsFixed(2)}',
-                      isIndented: true,
-                    ),
-                    _statRow(
-                      label: 'Chrono Epoch multiplier',
-                      value: 'x${chronoEpochGold.toStringAsFixed(2)}',
-                      isIndented: true,
-                    ),
-                    _statRow(
-                      label: 'Monster Hunter multiplier',
-                      value: 'x${hunterGoldMult.toStringAsFixed(0)}',
-                      isIndented: true,
-                    ),
-                    _statRow(
-                      label: 'Max gold (single rebirth)',
-                      value: displayNumber(maxGoldSingleRebirth),
+                      label: 'Max gold (single run)',
+                      value: displayNumber(s.maxSingleRunGold),
                     ),
                     _statRow(
                       label: 'Nuggets found (this run)',
@@ -558,25 +671,16 @@ class _StatsTabState extends State<StatsTab> {
                       label: 'Antimatter (this run)',
                       value: antimatterDisplay,
                     ),
-                    _statRow(
+
+                    // ✅ Collapsible group
+                    _collapsibleGroup(
+                      id: 'anti_core_mult',
                       label: 'Current antimatter multiplier',
-                      value: 'x${antiOverallEffective.toStringAsFixed(2)}',
+                      value: 'x${coreOreMultAnti.toStringAsFixed(2)}',
+                      children: antiCoreChildren,
+                      isLastInSection: false,
                     ),
-                    _statRow(
-                      label: 'Achievement multiplier',
-                      value: 'x${s.achievementMultiplier.toStringAsFixed(2)}',
-                      isIndented: true,
-                    ),
-                    _statRow(
-                      label: 'Chrono Epoch multiplier',
-                      value: 'x${chronoEpochAnti.toStringAsFixed(2)}',
-                      isIndented: true,
-                    ),
-                    _statRow(
-                      label: 'Monster Hunter multiplier',
-                      value: 'x${hunterAntiMult.toStringAsFixed(2)}',
-                      isIndented: true,
-                    ),
+
                     _statRow(
                       label: 'Max dark matter (single rebirth)',
                       value: 'TBD',

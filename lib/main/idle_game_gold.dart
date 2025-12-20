@@ -8,7 +8,7 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
   _IdleGameScreenState get _s => this as _IdleGameScreenState;
 
   // =========================
-  // NEW: Monster Hunter multipliers
+  // Monster Hunter multipliers
   // =========================
 
   double _monsterHunterGoldMultiplier() {
@@ -17,9 +17,31 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
     return lvl.toDouble();
   }
 
-  double _effectiveGoldOverallMultiplier() {
-    // Gold overall multiplier is boosted by Hunter Lv.
-    return _s._overallMultiplier * _monsterHunterGoldMultiplier();
+  // =========================
+  // ✅ CENTRAL MULTIPLIER CALCULATOR (ALL ORE MULTIPLIER LOGIC LIVES HERE)
+  // =========================
+
+  double _maxSingleRunGoldLogBoost() {
+    final double v = (_s._maxSingleRunGold <= 0) ? 1.0 : _s._maxSingleRunGold;
+    // Same behavior as before: (1 + log(maxSingleRunGold) / log(1000))
+    return 1.0 + (math.log(v) / math.log(1000));
+  }
+
+  /// Core multiplier applied to ore calculations.
+  ///
+  /// - chrono_stepPmultiplier mirrors rebirthMultiplier (per-run)
+  /// - achievementMultiplier is global (not mode-dependent)
+  /// - maxSingleRunGoldLogBoost is global (not mode-dependent)
+  /// - monster hunter boost applies only in gold mode
+  ///
+  /// This preserves the old shape:
+  ///   effective = 1 + (rebirthMultiplier * achievementMultiplier * logBoost)
+  /// and then (gold mode only) * hunterLevel
+  double _computeCoreOreMultiplier() {
+    final double base =
+        (_s._chronoStepPMultiplier * _s._achievementMultiplier * _maxSingleRunGoldLogBoost() * _monsterHunterGoldMultiplier());
+
+    return base;
   }
 
   void _tickAgingAndGps() {
@@ -130,7 +152,7 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
         phaseMult *
         frenzyMult *
         momentumFactor *
-        _effectiveGoldOverallMultiplier() *
+        _computeCoreOreMultiplier() *
         _s._clickMultiplicity *
         idleMult *
         timeMult;
@@ -147,7 +169,7 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
 
     final double timeMult = math.max(1.0, _s._rpsTimePower);
 
-    return baseCombined * frenzyMult * _effectiveGoldOverallMultiplier() * timeMult;
+    return baseCombined * frenzyMult * _computeCoreOreMultiplier() * timeMult;
   }
 
   void _updatePreviewPerClick() {
@@ -173,13 +195,11 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
       upperBound = 100;
     } else {
       manualClickCycles =
-          math.log(manualClicks * (scalingFactor - 1) / 100 + 1) /
-              math.log(scalingFactor);
+          math.log(manualClicks * (scalingFactor - 1) / 100 + 1) / math.log(scalingFactor);
       manualClickCycles = manualClickCycles.floorToDouble();
       lowerBound = 100 * (math.pow(scalingFactor, manualClickCycles) - 1) / (scalingFactor - 1);
       upperBound =
-          100 * (math.pow(scalingFactor, manualClickCycles + 1) - 1) /
-              (scalingFactor - 1);
+          100 * (math.pow(scalingFactor, manualClickCycles + 1) - 1) / (scalingFactor - 1);
     }
 
     final double progress = (manualClicks - lowerBound) / (upperBound - lowerBound);
@@ -312,8 +332,8 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
     final double finalRpsPower = math.max(1.0, rpsPower0 + _s._rpsAging * seconds);
     final double finalGpsPower = math.max(0.0, gpsPower0 + _s._gpsAging * seconds);
 
-    final double effectiveOverall =
-    (_s._gameMode == 'gold') ? _effectiveGoldOverallMultiplier() : _s._overallMultiplier;
+    // ✅ Central multiplier (NO timePower included here; timePower is in rpsPowerSum)
+    final double coreMult = _computeCoreOreMultiplier();
 
     double earned;
 
@@ -324,10 +344,8 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
       final int offlineEndSec = now.millisecondsSinceEpoch ~/ 1000;
       final int offlineStartSec = offlineEndSec - seconds;
 
-      final int frenzyStartSec =
-          _s._spellFrenzyLastTriggerTime!.millisecondsSinceEpoch ~/ 1000;
-      final int frenzyEndSec =
-          frenzyStartSec + _s._spellFrenzyDurationSeconds.round();
+      final int frenzyStartSec = _s._spellFrenzyLastTriggerTime!.millisecondsSinceEpoch ~/ 1000;
+      final int frenzyEndSec = frenzyStartSec + _s._spellFrenzyDurationSeconds.round();
 
       final int overlapStart = math.max(offlineStartSec, frenzyStartSec);
       final int overlapEnd = math.min(offlineEndSec, frenzyEndSec);
@@ -346,13 +364,13 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
         seconds: frenzyOverlap,
       );
 
-      final double normalEarned = baseCombined * effectiveOverall * normalRpsSum;
+      final double normalEarned = baseCombined * coreMult * normalRpsSum;
       final double frenzyEarned =
-          baseCombined * effectiveOverall * _s._spellFrenzyMultiplier * frenzyRpsSum;
+          baseCombined * coreMult * _s._spellFrenzyMultiplier * frenzyRpsSum;
 
       earned = normalEarned + frenzyEarned;
     } else {
-      earned = baseCombined * effectiveOverall * rpsPowerSum;
+      earned = baseCombined * coreMult * rpsPowerSum;
     }
 
     _s.setState(() {

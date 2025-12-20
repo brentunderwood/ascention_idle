@@ -494,7 +494,7 @@ class CardCatalog {
       longDescription:
       'On your next rebirth, add a multipier to resource generation based on how many of this card you have',
       cardEffect: (target, cardLevel, upgradesThisRun) {
-        target.setRebirthMultiplier(upgradesThisRun.toDouble());
+        target.setRebirthMultiplier(1+upgradesThisRun.toDouble());
       },
     ),
 

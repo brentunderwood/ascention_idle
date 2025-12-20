@@ -1,9 +1,11 @@
+// ==================================
+// idle_game_state_accessors.dart (FULL FILE)
+// ==================================
 part of 'idle_game_screen.dart';
 
 /// Mixin that provides the concrete implementation of [IdleGameEffectTarget]
 /// plus other small getter/setter helpers, so the main state file stays cleaner.
-mixin IdleGameEffectTargetMixin on State<IdleGameScreen>
-implements IdleGameEffectTarget {
+mixin IdleGameEffectTargetMixin on State<IdleGameScreen> implements IdleGameEffectTarget {
   @override
   List<OwnedCard> getAllOwnedCards() {
     return PlayerCollectionRepository.instance.allOwnedCards;
@@ -110,8 +112,7 @@ implements IdleGameEffectTarget {
     _this._goldOre += amount;
     _this._totalGoldOre += amount;
 
-    TutorialManager.instance
-        .onGoldOreChanged(context, _this._manualClickCount.toDouble());
+    TutorialManager.instance.onGoldOreChanged(context, _this._manualClickCount.toDouble());
   }
 
   @override
@@ -143,8 +144,7 @@ implements IdleGameEffectTarget {
 
   @override
   void setFrenzyCooldownFraction(double amount) {
-    _this._spellFrenzyCooldownSeconds =
-        _this._spellFrenzyDurationSeconds * amount;
+    _this._spellFrenzyCooldownSeconds = _this._spellFrenzyDurationSeconds * amount;
   }
 
   @override
@@ -165,18 +165,24 @@ implements IdleGameEffectTarget {
     _this.setState(() {
       _this._rebirthMultiplier = value;
     });
-    _this._saveProgress();
-  }
-
-  double getOverallMultiplier() => _this._overallMultiplier;
-
-  void setOverallMultiplier(double value) {
-    _this.setState(() {
-      _this._overallMultiplier = math.max(1.0, value);
-    });
     _this._updatePreviewPerClick();
     _this._saveProgress();
   }
+
+  // ===== New names (preferred) =====
+
+  double getChronoStepPMultiplier() => _this._chronoStepPMultiplier;
+
+  void setChronoStepPMultiplier(double value) {
+    // Keep them locked together.
+    setRebirthMultiplier(value);
+  }
+
+  // ===== Backward-compat aliases (if other files still call these) =====
+
+  double getOverallMultiplier() => _this._chronoStepPMultiplier;
+
+  void setOverallMultiplier(double value) => setChronoStepPMultiplier(value);
 
   double getAchievementMultiplier() => _this._achievementMultiplier;
 
@@ -184,10 +190,15 @@ implements IdleGameEffectTarget {
     _this.setState(() {
       _this._achievementMultiplier += delta;
     });
+    _this._updatePreviewPerClick();
     _this._saveProgress();
   }
 
-  double getMaxGoldMultiplier() => _this._maxGoldMultiplier;
+  // ✅ Renamed: maxGoldMultiplier -> maxSingleRunGold (global)
+  double getMaxSingleRunGold() => _this._maxSingleRunGold;
+
+  // Back-compat alias
+  double getMaxGoldMultiplier() => _this._maxSingleRunGold;
 
   double getGpsClickCoeff() => _this._gpsClickCoeff;
 
@@ -254,6 +265,7 @@ implements IdleGameEffectTarget {
   // ===== NEW: Time-Aging API (not part of the interface, but handy) =====
 
   double getClickAging() => _this._clickAging;
+
   void setClickAging(double value) {
     _this.setState(() {
       _this._clickAging = value;
@@ -262,6 +274,7 @@ implements IdleGameEffectTarget {
   }
 
   double getClickTimePower() => _this._clickTimePower;
+
   void setClickTimePower(double value) {
     _this.setState(() {
       _this._clickTimePower = math.max(1.0, value);
@@ -271,6 +284,7 @@ implements IdleGameEffectTarget {
   }
 
   double getRpsAging() => _this._rpsAging;
+
   void setRpsAging(double value) {
     _this.setState(() {
       _this._rpsAging = value;
@@ -279,6 +293,7 @@ implements IdleGameEffectTarget {
   }
 
   double getRpsTimePower() => _this._rpsTimePower;
+
   void setRpsTimePower(double value) {
     _this.setState(() {
       _this._rpsTimePower = math.max(1.0, value);
@@ -287,6 +302,7 @@ implements IdleGameEffectTarget {
   }
 
   double getGpsAging() => _this._gpsAging;
+
   void setGpsAging(double value) {
     _this.setState(() {
       _this._gpsAging = value;
@@ -295,6 +311,7 @@ implements IdleGameEffectTarget {
   }
 
   double getGpsTimePower() => _this._gpsTimePower;
+
   void setGpsTimePower(double value) {
     _this.setState(() {
       _this._gpsTimePower = math.max(0, value);
@@ -303,6 +320,7 @@ implements IdleGameEffectTarget {
   }
 
   int getTicsPerSecond() => _this._ticsPerSecond;
+
   void setTicsPerSecond(int value) {
     _this.setState(() {
       _this._ticsPerSecond = math.max(0, value);

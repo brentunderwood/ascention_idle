@@ -1,5 +1,5 @@
 // ==================================
-// idle_game_state.dart (UPDATED - FULL FILE)
+// idle_game_state.dart (UPDATED - FULL FILE)  ✅ FIXED chrono/rebirth pipeline
 // ==================================
 part of 'idle_game_screen.dart';
 
@@ -154,9 +154,19 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   double _spellFrenzyCooldownSeconds = 0.0;
   double _spellFrenzyMultiplier = 1.0;
 
+  /// ✅ Per-run (earned this run) multiplier.
+  /// This should NOT affect ore production directly.
   double _rebirthMultiplier = 1.0;
-  double _overallMultiplier = 1.0;
-  double _maxGoldMultiplier = 1.0;
+
+  /// ✅ Carry-over multiplier applied to ore production (next run).
+  /// This SHOULD affect ore production (gold code uses it).
+  double _chronoStepPMultiplier = 1.0;
+
+  /// ✅ Renamed: maxGoldMultiplier -> maxSingleRunGold
+  /// This is global (NOT mode-dependent).
+  double _maxSingleRunGold = 1.0;
+
+  /// Achievement multiplier is global (NOT mode-dependent).
   double _achievementMultiplier = 1.0;
 
   double _randomSpawnChance = 0.0;
@@ -294,18 +304,24 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
 
-    // ✅ NEW: monster keys should ALWAYS be stored under monster_... regardless of current _gameMode.
+    // ✅ Monster keys should ALWAYS be stored under monster_... regardless of current _gameMode.
     String mkMonster(String baseKey) => _modeKey(baseKey, 'monster');
 
     // Back-compat helpers: try monster_ key first, then current-mode key, then raw base.
     int? readMonsterInt(String baseKey) =>
-        _prefs!.getInt(mkMonster(baseKey)) ?? _prefs!.getInt(mk(baseKey)) ?? _prefs!.getInt(baseKey);
+        _prefs!.getInt(mkMonster(baseKey)) ??
+            _prefs!.getInt(mk(baseKey)) ??
+            _prefs!.getInt(baseKey);
 
     double? readMonsterDouble(String baseKey) =>
-        _prefs!.getDouble(mkMonster(baseKey)) ?? _prefs!.getDouble(mk(baseKey)) ?? _prefs!.getDouble(baseKey);
+        _prefs!.getDouble(mkMonster(baseKey)) ??
+            _prefs!.getDouble(mk(baseKey)) ??
+            _prefs!.getDouble(baseKey);
 
     String? readMonsterString(String baseKey) =>
-        _prefs!.getString(mkMonster(baseKey)) ?? _prefs!.getString(mk(baseKey)) ?? _prefs!.getString(baseKey);
+        _prefs!.getString(mkMonster(baseKey)) ??
+            _prefs!.getString(mk(baseKey)) ??
+            _prefs!.getString(baseKey);
 
     // ========= PER-MODE =========
     final storedGoldOre = _prefs!.getDouble(mk(kGoldOreKey));
@@ -328,8 +344,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final storedBonusOrePerSecond = _prefs!.getDouble(mk(kBonusOrePerSecondKey));
     final storedBonusOrePerClick = _prefs!.getDouble(mk(kBonusOrePerClickKey));
 
+    // ✅ IMPORTANT: these are distinct and must NOT be mirrored on load.
     final storedRebirthMultiplier = _prefs!.getDouble(mk(kRebirthMultiplierKey));
-    final storedOverallMultiplier = _prefs!.getDouble(mk(kOverallMultiplierKey));
+    final storedChronoStepP = _prefs!.getDouble(mk(kOverallMultiplierKey));
 
     final storedRandomSpawnChance = _prefs!.getDouble(mk(kRandomSpawnChanceKey));
     final storedBonusGoldFromNuggets = _prefs!.getInt(mk(kBonusRebirthGoldFromNuggetsKey));
@@ -394,7 +411,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final storedTotalRefinedGold = _readGlobalDoubleWithFallback(kTotalRefinedGoldKey);
     final storedRebirthCount = _readGlobalIntWithFallback(kRebirthCountKey);
 
-    final storedMaxGoldMultiplier = _readGlobalDoubleWithFallback(kMaxGoldMultiplierKey);
+    final storedMaxSingleRunGold = _readGlobalDoubleWithFallback(kMaxGoldMultiplierKey);
     final storedAchievementMultiplier = _readGlobalDoubleWithFallback(kAchievementMultiplierKey);
 
     final storedTotalClicks = _readGlobalIntWithFallback(kTotalClicksKey);
@@ -430,6 +447,23 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       polyScalars = polyScalars.sublist(0, poly.length);
     }
 
+    // ✅ Migration/fallback rules:
+    // - chronoStepPMultiplier is the carry-over production multiplier (should persist across runs)
+    // - rebirthMultiplier is earned this run only (usually 1 unless deck effects changed it)
+    double loadedRebirth = storedRebirthMultiplier ?? 1.0;
+    double loadedChrono;
+    if (storedChronoStepP != null) {
+      loadedChrono = storedChronoStepP;
+    } else if (storedRebirthMultiplier != null && storedChronoStepP == null) {
+      // Older saves might have only had one value; keep a reasonable fallback.
+      loadedChrono = storedRebirthMultiplier;
+    } else {
+      loadedChrono = 1.0;
+    }
+
+    loadedRebirth = math.max(1.0, loadedRebirth);
+    loadedChrono = math.max(1.0, loadedChrono);
+
     setState(() {
       _goldOre = storedGoldOre ?? 0;
       _totalGoldOre = storedTotalGoldOre ?? 0;
@@ -458,8 +492,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       _ticsPerSecond = math.max(0, storedTicsPerSecond ?? 0);
 
-      _rebirthMultiplier = storedRebirthMultiplier ?? 1.0;
-      _overallMultiplier = math.max(1.0, storedOverallMultiplier ?? 1.0);
+      // ✅ FIX: do NOT mirror these.
+      _rebirthMultiplier = loadedRebirth;
+      _chronoStepPMultiplier = loadedChrono;
 
       _manualClickCount = storedManualClicks ?? 0;
       _manualClickPower = storedManualClickPower ?? 1;
@@ -502,7 +537,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _totalRefinedGold = storedTotalRefinedGold ?? 0.0;
       _rebirthCount = storedRebirthCount ?? 0;
 
-      _maxGoldMultiplier = storedMaxGoldMultiplier ?? 1.0;
+      _maxSingleRunGold = storedMaxSingleRunGold ?? 1.0;
       _achievementMultiplier = storedAchievementMultiplier ?? 1.0;
 
       _totalClicks = storedTotalClicks ?? 0;
@@ -516,20 +551,17 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       _monsterPlayerLevel = math.max(1, storedMonsterPlayerLevel ?? 1);
 
       final double fallbackRage = (_monsterPlayerLevel * _monsterPlayerLevel).toDouble();
-      _monsterPlayerRage =
-          (storedMonsterPlayerRage ?? fallbackRage).clamp(1.0, double.infinity);
+      _monsterPlayerRage = (storedMonsterPlayerRage ?? fallbackRage).clamp(1.0, double.infinity);
 
       _monsterKillCount = math.max(0, storedKillCount ?? 0);
 
       // Attack = kill count (min 1 so it isn't a hard lock)
-      _monsterPlayerAttack = math.max(
-        1,
-        storedMonsterPlayerAttack ?? _monsterKillCount,
-      );
+      _monsterPlayerAttack = math.max(1, storedMonsterPlayerAttack ?? _monsterKillCount);
 
       _monsterPlayerExperience = math.max(0, storedMonsterPlayerExperience ?? 0);
 
-      _monsterAttackMode = (storedMonsterAttackMode == null || storedMonsterAttackMode.isEmpty)
+      _monsterAttackMode =
+      (storedMonsterAttackMode == null || storedMonsterAttackMode.isEmpty)
           ? 'head'
           : storedMonsterAttackMode;
 
@@ -563,7 +595,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
 
-    // ✅ NEW: monster keys should ALWAYS be stored under monster_... regardless of current _gameMode.
+    // ✅ Monster keys should ALWAYS be stored under monster_... regardless of current _gameMode.
     String mkMonster(String baseKey) => _modeKey(baseKey, 'monster');
 
     await _prefs!.setDouble(mk(kGoldOreKey), _goldOre);
@@ -575,10 +607,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
     await _prefs!.setDouble(mk(kIdleBoostKey), _idleBoost);
     if (_lastRockClickTime != null) {
-      await _prefs!.setInt(
-        mk(kLastRockClickTimeKey),
-        _lastRockClickTime!.millisecondsSinceEpoch,
-      );
+      await _prefs!.setInt(mk(kLastRockClickTimeKey), _lastRockClickTime!.millisecondsSinceEpoch);
     } else {
       await _prefs!.remove(mk(kLastRockClickTimeKey));
     }
@@ -615,8 +644,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setDouble(mk(kBonusOrePerSecondKey), _bonusOrePerSecond);
     await _prefs!.setDouble(mk(kBonusOrePerClickKey), _bonusOrePerClick);
 
+    // ✅ FIX: persist BOTH independently.
     await _prefs!.setDouble(mk(kRebirthMultiplierKey), _rebirthMultiplier);
-    await _prefs!.setDouble(mk(kOverallMultiplierKey), _overallMultiplier);
+    await _prefs!.setDouble(mk(kOverallMultiplierKey), _chronoStepPMultiplier);
 
     await _prefs!.setDouble(mk(kRandomSpawnChanceKey), _randomSpawnChance);
     await _prefs!.setInt(mk(kBonusRebirthGoldFromNuggetsKey), _bonusRebirthGoldFromNuggets);
@@ -632,15 +662,12 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setDouble(mk(kAntimatterKey), _antimatter);
     await _prefs!.setDouble(mk(kAntimatterPerSecondKey), _antimatterPerSecond);
     await _prefs!.setString(mk(kAntimatterPolynomialKey), jsonEncode(_antimatterPolynomial));
-    await _prefs!.setString(
-      mk(kAntimatterPolynomialScalarsKey),
-      jsonEncode(_antimatterPolynomialScalars),
-    );
+    await _prefs!.setString(mk(kAntimatterPolynomialScalarsKey), jsonEncode(_antimatterPolynomialScalars));
     await _prefs!.setInt(mk(kCurrentTicNumberKey), _currentTicNumber);
 
     // ✅ Monster saves (ALWAYS monster_...)
     await _prefs!.setInt(mkMonster(kMonsterPlayerLevelKey), _monsterPlayerLevel);
-    await _prefs!.setDouble(mkMonster(kMonsterPlayerRangeKey), _monsterPlayerRage); // stored under "range"
+    await _prefs!.setDouble(mkMonster(kMonsterPlayerRangeKey), _monsterPlayerRage);
     await _prefs!.setInt(mkMonster(kMonsterPlayerAttackKey), _monsterPlayerAttack);
     await _prefs!.setInt(mkMonster(kMonsterPlayerExperienceKey), _monsterPlayerExperience);
 
@@ -670,7 +697,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setDouble(kTotalRefinedGoldKey, _totalRefinedGold);
     await _prefs!.setInt(kRebirthCountKey, _rebirthCount);
 
-    await _prefs!.setDouble(kMaxGoldMultiplierKey, _maxGoldMultiplier);
+    await _prefs!.setDouble(kMaxGoldMultiplierKey, _maxSingleRunGold);
     await _prefs!.setDouble(kAchievementMultiplierKey, _achievementMultiplier);
 
     await _prefs!.setInt(kTotalClicksKey, _totalClicks);
@@ -762,12 +789,10 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         });
       }
 
-      // Antimatter ticking
       if (_gameMode == 'antimatter') {
         _tickAntimatterSecond(seconds: 1);
       }
 
-      // Monster ticking (auto-combat, regen, rage decay, etc.)
       if (_gameMode == 'monster') {
         tickMonsterSecond(seconds: 1);
       }

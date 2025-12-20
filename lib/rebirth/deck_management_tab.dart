@@ -1,3 +1,6 @@
+// ==================================
+// deck_management_tab.dart (UPDATED - FULL FILE)
+// ==================================
 import 'dart:math' as math;
 import 'dart:convert';
 
@@ -10,6 +13,9 @@ import '../cards/game_card_face.dart';
 import '../cards/info_dialog.dart';
 import '../cards/player_collection_repository.dart';
 import '../tutorial_manager.dart';
+
+// ✅ NEW: bestiary support
+import '../main/monster_catalog.dart';
 
 /// Manual pack display order used for:
 ///  - Collection sorting (by pack, then rank)
@@ -56,7 +62,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   String _selectedViewId = 'collection';
   bool _loaded = false;
 
-  /// Current game mode: 'gold' or 'antimatter'.
+  /// Current game mode: 'gold' or 'antimatter' or 'monster'.
   String _gameMode = 'gold';
 
   /// Drawer starts CLOSED whenever this tab is opened.
@@ -76,6 +82,9 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   /// Player collection (all owned cards). SHARED across modes.
   List<OwnedCard> _collection = [];
 
+  /// ✅ Bestiary kill counts (per monster id)
+  final Map<String, int> _monsterKills = {};
+
   @override
   void initState() {
     super.initState();
@@ -85,10 +94,10 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
   /// Map a base key to a per-mode key:
   ///  - gold mode: returns baseKey as-is (backwards compatible).
   ///  - antimatter: returns 'antimatter_<baseKey>'.
+  ///  - monster: returns 'monster_<baseKey>' (not currently used, but safe).
   String _modeKey(String baseKey, String gameMode) {
-    if (gameMode == 'antimatter') {
-      return 'antimatter_$baseKey';
-    }
+    if (gameMode == 'antimatter') return 'antimatter_$baseKey';
+    if (gameMode == 'monster') return 'monster_$baseKey';
     return baseKey;
   }
 
@@ -99,6 +108,12 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
 
     if (storedMode == 'mine_gold') return 'gold';
     if (storedMode == 'create_antimatter') return 'antimatter';
+
+    // ✅ Monster mode variants
+    if (storedMode == 'monster') return 'monster';
+    if (storedMode == 'monster_hunting') return 'monster';
+    if (storedMode == 'hunt_monsters') return 'monster';
+
     if (storedMode == 'gold' || storedMode == 'antimatter') {
       return storedMode!;
     }
@@ -111,6 +126,27 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     // Determine which mode we are in so we can scope deck data.
     final mode = _resolveCurrentGameMode(prefs);
     _gameMode = mode;
+
+    // ✅ Monster mode: bestiary only (no decks/collection UI)
+    if (mode == 'monster') {
+      _monsterKills.clear();
+      for (final e in MonsterCatalog.entries) {
+        // Show all entries that have at least a name or an image path.
+        // (You can remove this filter if you want placeholders visible.)
+        if (e.monsterName.isEmpty && e.monsterImagePath.isEmpty) continue;
+
+        final int kills = prefs.getInt(MonsterCatalog.killCountKeyForEntry(e)) ?? 0;
+        _monsterKills[e.id] = kills;
+      }
+
+      setState(() {
+        _loaded = true;
+        _drawerOpen = false;
+        _selectedViewId = 'bestiary';
+      });
+      return;
+    }
+
     String mk(String baseKey) => _modeKey(baseKey, mode);
 
     final storedCount = prefs.getInt(mk(_deckSlotCountKey));
@@ -140,8 +176,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       }
     }
 
-    int slotCount =
-    (storedCount != null && storedCount >= 1) ? storedCount : 1;
+    int slotCount = (storedCount != null && storedCount >= 1) ? storedCount : 1;
 
     // Ensure we have one _DeckData per slot.
     decks = _ensureDeckListForSlotCount(decks, slotCount);
@@ -158,9 +193,8 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       _decks = decks;
 
       // Respect stored max cards / capacity (GLOBAL).
-      _maxCards = (storedMaxCards != null && storedMaxCards >= 1)
-          ? storedMaxCards
-          : 1;
+      _maxCards =
+      (storedMaxCards != null && storedMaxCards >= 1) ? storedMaxCards : 1;
       _maxCapacity = (storedMaxCapacity != null && storedMaxCapacity >= 1)
           ? storedMaxCapacity
           : 1;
@@ -531,6 +565,184 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
     }
   }
 
+  // ============================================================
+  // ✅ Monster mode: Bestiary UI
+  // ============================================================
+
+  Future<void> _reloadMonsterKills() async {
+    final prefs = await SharedPreferences.getInstance();
+    final Map<String, int> fresh = {};
+    for (final e in MonsterCatalog.entries) {
+      if (e.monsterName.isEmpty && e.monsterImagePath.isEmpty) continue;
+      fresh[e.id] = prefs.getInt(MonsterCatalog.killCountKeyForEntry(e)) ?? 0;
+    }
+    if (!mounted) return;
+    setState(() {
+      _monsterKills
+        ..clear()
+        ..addAll(fresh);
+    });
+  }
+
+  static const List<double> _grayscaleMatrix = <double>[
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0,      0,      0,      1, 0,
+  ];
+
+  Widget _buildBestiaryView() {
+    final bestiary = MonsterCatalog.entries
+        .where((e) => !(e.monsterName.isEmpty && e.monsterImagePath.isEmpty))
+        .toList();
+
+    if (bestiary.isEmpty) {
+      return const Center(
+        child: Text(
+          'No monsters in the bestiary yet.',
+          style: TextStyle(color: Colors.white, fontSize: 16),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Bestiary',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  shadows: [
+                    Shadow(
+                      blurRadius: 4,
+                      color: Colors.black54,
+                      offset: Offset(1, 1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Refresh kills',
+              icon: const Icon(Icons.refresh, color: Colors.white70),
+              onPressed: _reloadMonsterKills,
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.all(8.0),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.6,
+            ),
+            itemCount: bestiary.length,
+            itemBuilder: (context, index) {
+              final e = bestiary[index];
+              final kills = _monsterKills[e.id] ?? 0;
+
+              // ✅ Gray out unless at least 1 kill
+              final bool discovered = kills > 0;
+
+              final title = e.monsterName.isNotEmpty ? e.monsterName : '???';
+              final subtitle = '${e.monsterClass.name} • R${e.monsterRarity}';
+              final killText = 'Kills: $kills';
+
+              final baseArt = (e.monsterImagePath.isNotEmpty)
+                  ? Image.asset(e.monsterImagePath, fit: BoxFit.contain)
+                  : Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.25),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Center(
+                  child: Text(
+                    'No art',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ),
+              );
+
+              final art = discovered
+                  ? baseArt
+                  : Opacity(
+                opacity: 0.35,
+                child: ColorFiltered(
+                  colorFilter:
+                  const ColorFilter.matrix(_grayscaleMatrix),
+                  child: baseArt,
+                ),
+              );
+
+              final Color titleColor =
+              discovered ? Colors.white : Colors.white54;
+              final Color subtitleColor =
+              discovered ? Colors.white70 : Colors.white38;
+              final Color killsColor =
+              discovered ? Colors.amber : Colors.white38;
+
+              return Column(
+                children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6.0),
+                          child: art,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    title,
+                    style: TextStyle(color: titleColor, fontSize: 12),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    subtitle,
+                    style: TextStyle(color: subtitleColor, fontSize: 10),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    killText,
+                    style: TextStyle(color: killsColor, fontSize: 10),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // Normal (gold/antimatter) UI
+  // ============================================================
+
   Widget _buildCollectionView() {
     if (_collection.isEmpty) {
       return const Center(
@@ -546,14 +758,17 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       );
     }
 
-    final items = _collection.map((owned) {
+    final items = _collection
+        .map((owned) {
       final card = CardCatalog.getById(owned.cardId);
       if (card == null) return null;
       return _OwnedCardDisplayData(
         card: card,
         owned: owned,
       );
-    }).whereType<_OwnedCardDisplayData>().toList();
+    })
+        .whereType<_OwnedCardDisplayData>()
+        .toList();
 
     if (items.isEmpty) {
       return const Center(
@@ -899,6 +1114,19 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    // ✅ Monster mode: replace entire tab with bestiary
+    if (_gameMode == 'monster') {
+      return Container(
+        color: Colors.black.withOpacity(0.3),
+        width: double.infinity,
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: _buildBestiaryView(),
+        ),
+      );
+    }
+
+    // Gold/antimatter mode: existing decks + collection UI.
     return Container(
       color: Colors.black.withOpacity(0.3),
       width: double.infinity,
@@ -913,8 +1141,7 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
                     _drawerOpen ? Icons.menu_open : Icons.menu,
                     color: Colors.white,
                   ),
-                  tooltip:
-                  _drawerOpen ? 'Hide deck drawer' : 'Show deck drawer',
+                  tooltip: _drawerOpen ? 'Hide deck drawer' : 'Show deck drawer',
                   onPressed: () {
                     setState(() {
                       _drawerOpen = !_drawerOpen;
@@ -1053,7 +1280,8 @@ class _DeckManagementTabState extends State<DeckManagementTab> {
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2.0),
                       child: _buildDeckTile(
-                        label: _decks.length > i ? _decks[i].name : 'Deck ${i + 1}',
+                        label:
+                        _decks.length > i ? _decks[i].name : 'Deck ${i + 1}',
                         selected: _selectedViewId == 'deck_${i + 1}',
                         isActive: _activeDeckIndexZero == i,
                         icon: Icons.layers,

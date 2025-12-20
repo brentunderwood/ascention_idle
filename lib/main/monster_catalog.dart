@@ -1,5 +1,5 @@
 // ==================================
-// monster_catalog.dart (NEW FILE)
+// monster_catalog.dart (UPDATED FILE)
 // ==================================
 import 'dart:math' as math;
 
@@ -7,9 +7,7 @@ import 'dart:math' as math;
 enum MonsterStat { hp, def, regen, aura }
 
 /// Available monster classes.
-enum MonsterClass {
-  mythic
-}
+enum MonsterClass { mythic }
 
 /// Per-class stat distribution probabilities (must sum to ~1.0).
 class MonsterClassInfo {
@@ -42,12 +40,16 @@ class MonsterClassInfo {
 
 /// A monster art/name entry.
 class MonsterEntry {
+  /// Stable id used for persistence (kills, unlocks, etc).
+  final String id;
+
   final String monsterName;
   final MonsterClass monsterClass;
   final int monsterRarity; // 1..10
   final String monsterImagePath;
 
   const MonsterEntry({
+    required this.id,
     required this.monsterName,
     required this.monsterClass,
     required this.monsterRarity,
@@ -56,14 +58,15 @@ class MonsterEntry {
 }
 
 class MonsterCatalog {
+  /// Prefix for per-monster kill counts in SharedPreferences.
+  static const String killCountPrefix = 'monster_kills_';
+
   /// Class list used for random selection.
   static const List<MonsterClass> availableClasses = [
     MonsterClass.mythic,
   ];
 
   /// Per-class stat point distribution probabilities.
-  ///
-  /// You can tune these later; they only need to exist and sum to 1.
   static const Map<MonsterClass, MonsterClassInfo> classInfo = {
     MonsterClass.mythic: MonsterClassInfo(
       monsterClass: MonsterClass.mythic,
@@ -81,60 +84,72 @@ class MonsterCatalog {
   /// - "most attributes blank" (we keep name/image path blank; rarity/class set)
   static const List<MonsterEntry> entries = [
     MonsterEntry(
+      id: 'mythic_r1_minotaur',
       monsterName: 'Minotaur',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 1,
-      monsterImagePath: 'assets/click_screen_art/monster_hunting/mythic/r1_minotaur.png',
+      monsterImagePath:
+      'assets/click_screen_art/monster_hunting/mythic/r1_minotaur.png',
     ),
     MonsterEntry(
-      monsterName: '',
+      id: 'mythic_r2_harpy',
+      monsterName: 'Harpy',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 2,
-      monsterImagePath: '',
+      monsterImagePath: 'assets/click_screen_art/monster_hunting/mythic/r2_harpy.png',
     ),
     MonsterEntry(
-      monsterName: '',
+      id: 'mythic_r3_medusa',
+      monsterName: 'Medusa',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 3,
-      monsterImagePath: '',
+      monsterImagePath: 'assets/click_screen_art/monster_hunting/mythic/r3_medusa.png',
     ),
     MonsterEntry(
+      id: 'mythic_r4_placeholder',
       monsterName: '',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 4,
       monsterImagePath: '',
     ),
     MonsterEntry(
+      id: 'mythic_r5_placeholder',
       monsterName: '',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 5,
       monsterImagePath: '',
     ),
     MonsterEntry(
+      id: 'mythic_r6_cerberus',
       monsterName: 'Cerberus',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 6,
-      monsterImagePath: 'assets/click_screen_art/monster_hunting/mythic/r6_cerberus.png',
+      monsterImagePath:
+      'assets/click_screen_art/monster_hunting/mythic/r6_cerberus.png',
     ),
     MonsterEntry(
+      id: 'mythic_r7_placeholder',
       monsterName: '',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 7,
       monsterImagePath: '',
     ),
     MonsterEntry(
+      id: 'mythic_r8_placeholder',
       monsterName: '',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 8,
       monsterImagePath: '',
     ),
     MonsterEntry(
+      id: 'mythic_r9_placeholder',
       monsterName: '',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 9,
       monsterImagePath: '',
     ),
     MonsterEntry(
+      id: 'mythic_r10_placeholder',
       monsterName: '',
       monsterClass: MonsterClass.mythic,
       monsterRarity: 10,
@@ -142,12 +157,41 @@ class MonsterCatalog {
     ),
   ];
 
+  /// SharedPreferences key used for a monster's kill count.
+  static String killCountKey(String monsterId) => '$killCountPrefix$monsterId';
+
+  static String killCountKeyForEntry(MonsterEntry e) => killCountKey(e.id);
+
   static MonsterEntry? findEntry(MonsterClass cls, int rarity, math.Random rng) {
     final matches = entries
         .where((e) => e.monsterClass == cls && e.monsterRarity == rarity)
         .toList();
     if (matches.isEmpty) return null;
     return matches[rng.nextInt(matches.length)];
+  }
+
+  /// Find by class+rarity + either imagePath or name.
+  /// Useful when you only have what's stored on the state.
+  static MonsterEntry? findBySnapshot({
+    required MonsterClass cls,
+    required int rarity,
+    required String name,
+    required String imagePath,
+  }) {
+    if (imagePath.isNotEmpty) {
+      final hit = entries.where((e) => e.monsterImagePath == imagePath).toList();
+      if (hit.isNotEmpty) return hit.first;
+    }
+
+    final hits = entries
+        .where((e) =>
+    e.monsterClass == cls &&
+        e.monsterRarity == rarity &&
+        (name.isNotEmpty ? e.monsterName == name : true))
+        .toList();
+
+    if (hits.isEmpty) return null;
+    return hits.first;
   }
 
   static MonsterClassInfo infoFor(MonsterClass cls) {

@@ -165,6 +165,9 @@ mixin IdleGameRebirthMixin on State<IdleGameScreen> {
     final bool wasGoldMode = _s._gameMode == 'gold';
     final double darkMatterReward = _s._pendingDarkMatter;
 
+    // ✅ Capture the multiplier you earned THIS run before resetting anything.
+    final double carryOverChrono = (_s._rebirthMultiplier <= 0) ? 1.0 : _s._rebirthMultiplier;
+
     _s.setState(() {
       _s._manualClickCyclesThisRun = manualCyclesThisRun;
       _s._totalManualClickCycles += manualCyclesThisRun;
@@ -172,22 +175,17 @@ mixin IdleGameRebirthMixin on State<IdleGameScreen> {
       _s._clicksThisRun = 0;
       _s._gameMode = selectedMode;
 
+      // ✅ Max single-run refined gold is global (not mode-dependent).
       if (wasGoldMode && rebirthGold > 0) {
         _s._gold += rebirthGold;
         _s._totalRefinedGold += rebirthGold;
 
         _s._rebirthCount += 1;
 
-        final double rebirthGoldForMax = rebirthGold <= 0 ? 1.0 : rebirthGold;
-        if (rebirthGoldForMax > _s._maxGoldMultiplier) {
-          _s._maxGoldMultiplier = rebirthGoldForMax;
+        final double v = rebirthGold <= 0 ? 1.0 : rebirthGold;
+        if (v > _s._maxSingleRunGold) {
+          _s._maxSingleRunGold = v;
         }
-
-        final double combined = (1 +
-            _s._rebirthMultiplier *
-                _s._achievementMultiplier *
-                (1 + math.log(_s._maxGoldMultiplier) / math.log(1000)));
-        _s._overallMultiplier = math.max(1.0, combined);
       }
 
       if (!wasGoldMode && darkMatterReward > 0) {
@@ -195,6 +193,10 @@ mixin IdleGameRebirthMixin on State<IdleGameScreen> {
         _s._pendingDarkMatter = 0.0;
       }
 
+      // ✅ This is the intended behavior:
+      // - rebirthMultiplier is "earned this run" (does nothing to ore)
+      // - chronoStepPMultiplier is "banked for next run" (does affect ore)
+      _s._chronoStepPMultiplier = carryOverChrono;
       _s._rebirthMultiplier = 1.0;
 
       _s._goldOre = 0;
@@ -271,14 +273,14 @@ mixin IdleGameRebirthMixin on State<IdleGameScreen> {
           'Total rebirths: ${_s._rebirthCount}\n'
           'Total refined gold: ${_s._totalRefinedGold.toStringAsFixed(0)}\n'
           'Game mode: $runGoalText\n'
-          'Overall multiplier for this run: x${_s._overallMultiplier.toStringAsFixed(2)}';
+          'Chrono Step+ multiplier (rebirth): x${_s._chronoStepPMultiplier.toStringAsFixed(2)}';
     } else {
       message =
       'You rebirthed in antimatter mode and gained '
           '${displayNumber(darkMatterReward)} dark matter.\n'
           'Total dark matter: ${displayNumber(_s._darkMatter)}\n'
           'Game mode: $runGoalText\n'
-          'Overall multiplier for this run: x${_s._overallMultiplier.toStringAsFixed(2)}';
+          'Chrono Step+ multiplier (rebirth): x${_s._chronoStepPMultiplier.toStringAsFixed(2)}';
     }
 
     await alert_user(

@@ -52,11 +52,13 @@ mixin IdleGameAntimatterMixin on State<IdleGameScreen> {
       // (Matches your current approach; APS updates for subsequent ticks.)
       _s._antimatter += _s._antimatterPerSecond * seconds;
 
-      // Use the game's current overall multiplier stack (includes achievement/hunter/etc).
-      final double overall =
-      (_s._overallMultiplier.isFinite && _s._overallMultiplier > 0)
-          ? _s._overallMultiplier
-          : 1.0;
+      // ✅ Updated: use the new core multiplier stack that replaced _overallMultiplier.
+      // - _chronoStepPMultiplier mirrors rebirth multiplier
+      // - achievement multiplier is global
+      // - maxSingleRunGold log boost is global
+      // - monster hunter multiplier only affects gold mode (so it won't impact antimatter)
+      final double stepMult = _s._computeCoreOreMultiplier();
+      final double overall = (stepMult.isFinite && stepMult > 0) ? stepMult : 1.0;
 
       // Compute the NEW effective APS, with multipliers applied per-step to the polynomial.
       final double effectiveAps = _evaluateAntimatterPolynomial(
