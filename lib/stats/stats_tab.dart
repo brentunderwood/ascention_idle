@@ -11,17 +11,6 @@ import '../cards/game_card_models.dart';
 import '../cards/card_catalog.dart';
 import '../utilities/display_functions.dart';
 
-/// Stats page UI extracted into its own file.
-///
-/// This version reads what it needs from SharedPreferences:
-/// - "Gold Mode" section uses the base keys (no prefix).
-/// - "Antimatter Mode" section uses the same keys prefixed with `antimatter_`.
-/// - Meta values are read from the global keys (no prefix).
-///
-/// It shows the SAME sections regardless of current mode:
-/// - Meta
-/// - Gold Mode
-/// - Antimatter Mode
 class StatsTab extends StatefulWidget {
   const StatsTab({super.key});
 
@@ -53,6 +42,11 @@ const String kManualClickCyclesThisRunKey = 'manual_click_cycles_this_run';
 /// Antimatter per-mode keys (also stored per-mode; we access via prefix mapping)
 const String kAntimatterKey = 'antimatter';
 
+/// Monster hunter keys (global keys used by monster mode)
+const String kMonsterPlayerLevelKey = 'monster_player_level';
+const String kMonsterPlayerExperienceKey = 'monster_player_experience';
+const String kMonsterKillCountKey = 'monster_kill_count';
+
 /// Mode prefix helper:
 /// - gold: baseKey
 /// - antimatter: 'antimatter_<baseKey>'
@@ -61,7 +55,6 @@ String _modeKey(String baseKey, String mode) {
   return baseKey; // gold / default
 }
 
-/// Snapshot of stats values loaded from prefs.
 class _StatsSnapshot {
   // Meta/global
   final double totalRefinedGold;
@@ -72,15 +65,20 @@ class _StatsSnapshot {
   final double totalManualClickCyclesAllTime;
   final int maxCardCount;
 
+  // Monster hunter
+  final int monstersKilled;
+  final int hunterLevel;
+  final int hunterExp;
+
   // Gold-mode (per-run/per-mode)
   final double goldTotalOreThisRebirth;
-  final double goldOverallMultiplier;
+  final double goldOverallMultiplier; // stored overall (without hunter boost)
   final int goldClicksThisRun;
   final double goldRefinedGoldFromNuggetsThisRun; // stored as manualClickCyclesThisRun
 
   // Antimatter-mode (per-run/per-mode)
   final double antiAntimatterCurrentRun;
-  final double antiOverallMultiplier;
+  final double antiOverallMultiplier; // stored overall (may historically include max-gold derived)
 
   const _StatsSnapshot({
     required this.totalRefinedGold,
@@ -90,6 +88,9 @@ class _StatsSnapshot {
     required this.totalClicksAllTime,
     required this.totalManualClickCyclesAllTime,
     required this.maxCardCount,
+    required this.monstersKilled,
+    required this.hunterLevel,
+    required this.hunterExp,
     required this.goldTotalOreThisRebirth,
     required this.goldOverallMultiplier,
     required this.goldClicksThisRun,
@@ -120,23 +121,33 @@ class _StatsTabState extends State<StatsTab> {
     final maxGoldSingleRebirthValue = prefs.getDouble(kMaxGoldMultiplierKey) ?? 1.0;
 
     final totalClicksAllTime = prefs.getInt(kTotalClicksKey) ?? 0;
-    final totalManualClickCyclesAllTime = prefs.getDouble(kTotalManualClickCyclesKey) ?? 0.0;
+    final totalManualClickCyclesAllTime =
+        prefs.getDouble(kTotalManualClickCyclesKey) ?? 0.0;
     final maxCardCount = prefs.getInt(kMaxCardCountKey) ?? 0;
+
+    // ---- Monster hunter ----
+    final monstersKilled = prefs.getInt(kMonsterKillCountKey) ?? 0;
+    final hunterLevel = prefs.getInt(kMonsterPlayerLevelKey) ?? 1;
+    final hunterExp = prefs.getInt(kMonsterPlayerExperienceKey) ?? 0;
 
     // ---- Gold mode (base keys) ----
     const goldMode = 'gold';
-    final goldTotalOreThisRebirth = prefs.getDouble(_modeKey(kTotalGoldOreKey, goldMode)) ?? 0.0;
-    final goldOverallMultiplier = prefs.getDouble(_modeKey(kOverallMultiplierKey, goldMode)) ?? 1.0;
+    final goldTotalOreThisRebirth =
+        prefs.getDouble(_modeKey(kTotalGoldOreKey, goldMode)) ?? 0.0;
+    final goldOverallMultiplier =
+        prefs.getDouble(_modeKey(kOverallMultiplierKey, goldMode)) ?? 1.0;
     final goldClicksThisRun = prefs.getInt(_modeKey(kClicksThisRunKey, goldMode)) ?? 0;
 
-    // This is your repurposed stat: refined gold from nuggets this run
+    // Refined gold from nuggets this run is stored in manual_click_cycles_this_run
     final goldRefinedGoldFromNuggetsThisRun =
         prefs.getDouble(_modeKey(kManualClickCyclesThisRunKey, goldMode)) ?? 0.0;
 
     // ---- Antimatter mode (prefixed keys) ----
     const antiMode = 'antimatter';
-    final antiAntimatterCurrentRun = prefs.getDouble(_modeKey(kAntimatterKey, antiMode)) ?? 0.0;
-    final antiOverallMultiplier = prefs.getDouble(_modeKey(kOverallMultiplierKey, antiMode)) ?? 1.0;
+    final antiAntimatterCurrentRun =
+        prefs.getDouble(_modeKey(kAntimatterKey, antiMode)) ?? 0.0;
+    final antiOverallMultiplier =
+        prefs.getDouble(_modeKey(kOverallMultiplierKey, antiMode)) ?? 1.0;
 
     return _StatsSnapshot(
       totalRefinedGold: totalRefinedGold,
@@ -146,6 +157,9 @@ class _StatsTabState extends State<StatsTab> {
       totalClicksAllTime: totalClicksAllTime,
       totalManualClickCyclesAllTime: totalManualClickCyclesAllTime,
       maxCardCount: maxCardCount,
+      monstersKilled: monstersKilled,
+      hunterLevel: hunterLevel,
+      hunterExp: hunterExp,
       goldTotalOreThisRebirth: goldTotalOreThisRebirth,
       goldOverallMultiplier: goldOverallMultiplier,
       goldClicksThisRun: goldClicksThisRun,
@@ -296,14 +310,36 @@ class _StatsTabState extends State<StatsTab> {
     return 1.0 + (math.log(safe) / math.log(1000.0));
   }
 
-  double _chronoEpochMultiplier({
-    required double overall,
+  double _chronoEpochMultiplierGold({
+    required double overallStored,
     required double achievement,
     required double maxGoldDerived,
   }) {
-    final denom = (achievement <= 0 ? 1.0 : achievement) * (maxGoldDerived <= 0 ? 1.0 : maxGoldDerived);
-    if (denom == 0) return overall;
-    return overall / denom;
+    final denom =
+        (achievement <= 0 ? 1.0 : achievement) * (maxGoldDerived <= 0 ? 1.0 : maxGoldDerived);
+    if (denom == 0) return overallStored;
+    return overallStored / denom;
+  }
+
+  double _chronoEpochMultiplierAntimatterNoMax({
+    required double overallNoMax,
+    required double achievement,
+  }) {
+    final denom = (achievement <= 0 ? 1.0 : achievement);
+    if (denom == 0) return overallNoMax;
+    return overallNoMax / denom;
+  }
+
+  double _monsterHunterGoldMult(int hunterLevel) {
+    final lvl = hunterLevel <= 0 ? 1 : hunterLevel;
+    return lvl.toDouble();
+  }
+
+  double _monsterHunterAntimatterMult(int hunterLevel) {
+    final double L = math.max(1.0, hunterLevel.toDouble());
+    final double m = math.pow(L, math.log(L)).toDouble();
+    if (!m.isFinite || m <= 0) return 1.0;
+    return m;
   }
 
   int _nuggetsFoundThisRunFromRefinedGold(double refinedGoldFromNuggets) {
@@ -314,8 +350,8 @@ class _StatsTabState extends State<StatsTab> {
 
   @override
   Widget build(BuildContext context) {
-    // Cards are not in prefs; they live in the repository.
-    final List<OwnedCard> ownedCards = PlayerCollectionRepository.instance.allOwnedCards;
+    final List<OwnedCard> ownedCards =
+        PlayerCollectionRepository.instance.allOwnedCards;
 
     final int totalCardLevels = _sumCardLevels(ownedCards);
     final int maxCardLevel = _maxCardLevel(ownedCards);
@@ -350,29 +386,42 @@ class _StatsTabState extends State<StatsTab> {
 
         final s = snap.data!;
 
-        // Gold-derived multipliers (based on the "max gold single rebirth" value)
+        // Derived multipliers
         final double maxGoldSingleRebirth = s.maxGoldSingleRebirthValue;
         final double maxGoldMultDerived = _maxGoldDerivedMultiplier(maxGoldSingleRebirth);
 
-        final double chronoEpochGold = _chronoEpochMultiplier(
-          overall: s.goldOverallMultiplier,
+        final double hunterGoldMult = _monsterHunterGoldMult(s.hunterLevel);
+        final double hunterAntiMult = _monsterHunterAntimatterMult(s.hunterLevel);
+
+        // Gold: chrono epoch from stored overall (which is then boosted by hunter level in gameplay)
+        final double chronoEpochGold = _chronoEpochMultiplierGold(
+          overallStored: s.goldOverallMultiplier,
           achievement: s.achievementMultiplier,
           maxGoldDerived: maxGoldMultDerived,
         );
+        final double goldOverallEffective = s.goldOverallMultiplier * hunterGoldMult;
 
-        final double chronoEpochAnti = _chronoEpochMultiplier(
-          overall: s.antiOverallMultiplier,
+        // Antimatter: remove max-gold-derived from the stored overall, then apply hunter formula
+        final double antiOverallNoMax =
+        (maxGoldMultDerived <= 0) ? s.antiOverallMultiplier : (s.antiOverallMultiplier / maxGoldMultDerived);
+
+        final double chronoEpochAnti = _chronoEpochMultiplierAntimatterNoMax(
+          overallNoMax: antiOverallNoMax,
           achievement: s.achievementMultiplier,
-          maxGoldDerived: maxGoldMultDerived,
         );
 
-        // Nuggets per your rules:
-        // refinedGoldFromNuggetsThisRun is stored in manual_click_cycles_this_run (gold mode).
-        // nuggetsFound = floor(sqrt(2 * refinedGold))
+        final double antiOverallEffective = antiOverallNoMax * hunterAntiMult;
+
+        // Nuggets
         final double refinedGoldFromNuggetsThisRun = s.goldRefinedGoldFromNuggetsThisRun;
-        final int nuggetsFoundThisRun = _nuggetsFoundThisRunFromRefinedGold(refinedGoldFromNuggetsThisRun);
+        final int nuggetsFoundThisRun =
+        _nuggetsFoundThisRunFromRefinedGold(refinedGoldFromNuggetsThisRun);
 
         final String antimatterDisplay = factorialDisplay(s.antiAntimatterCurrentRun);
+
+        // Monster hunter EXP
+        final int hunterLvlSafe = (s.hunterLevel <= 0) ? 1 : s.hunterLevel;
+        final int expToNext = (hunterLvlSafe + 1) * (hunterLvlSafe + 1) * (hunterLvlSafe + 1);
 
         return SafeArea(
           child: SingleChildScrollView(
@@ -421,6 +470,26 @@ class _StatsTabState extends State<StatsTab> {
 
                 const SizedBox(height: 12),
                 _sectionCard(
+                  title: 'Monster Hunter',
+                  rows: [
+                    _statRow(
+                      label: 'Monsters killed',
+                      value: s.monstersKilled.toString(),
+                    ),
+                    _statRow(
+                      label: 'Hunter Lv',
+                      value: hunterLvlSafe.toString(),
+                    ),
+                    _statRow(
+                      label: 'Exp / Exp to next level',
+                      value: '${s.hunterExp} / $expToNext',
+                      isLast: true,
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+                _sectionCard(
                   title: 'Gold Mode',
                   rows: [
                     _statRow(
@@ -439,7 +508,7 @@ class _StatsTabState extends State<StatsTab> {
                     ),
                     _statRow(
                       label: 'Current ore multiplier',
-                      value: 'x${s.goldOverallMultiplier.toStringAsFixed(2)}',
+                      value: 'x${goldOverallEffective.toStringAsFixed(2)}',
                     ),
                     _statRow(
                       label: 'Achievement multiplier',
@@ -454,6 +523,11 @@ class _StatsTabState extends State<StatsTab> {
                     _statRow(
                       label: 'Chrono Epoch multiplier',
                       value: 'x${chronoEpochGold.toStringAsFixed(2)}',
+                      isIndented: true,
+                    ),
+                    _statRow(
+                      label: 'Monster Hunter multiplier',
+                      value: 'x${hunterGoldMult.toStringAsFixed(0)}',
                       isIndented: true,
                     ),
                     _statRow(
@@ -486,7 +560,7 @@ class _StatsTabState extends State<StatsTab> {
                     ),
                     _statRow(
                       label: 'Current antimatter multiplier',
-                      value: 'x${s.antiOverallMultiplier.toStringAsFixed(2)}',
+                      value: 'x${antiOverallEffective.toStringAsFixed(2)}',
                     ),
                     _statRow(
                       label: 'Achievement multiplier',
@@ -494,13 +568,13 @@ class _StatsTabState extends State<StatsTab> {
                       isIndented: true,
                     ),
                     _statRow(
-                      label: 'Max gold multiplier',
-                      value: 'x${maxGoldMultDerived.toStringAsFixed(2)}',
+                      label: 'Chrono Epoch multiplier',
+                      value: 'x${chronoEpochAnti.toStringAsFixed(2)}',
                       isIndented: true,
                     ),
                     _statRow(
-                      label: 'Chrono Epoch multiplier',
-                      value: 'x${chronoEpochAnti.toStringAsFixed(2)}',
+                      label: 'Monster Hunter multiplier',
+                      value: 'x${hunterAntiMult.toStringAsFixed(2)}',
                       isIndented: true,
                     ),
                     _statRow(
@@ -519,6 +593,4 @@ class _StatsTabState extends State<StatsTab> {
   }
 }
 
-/// Convenience helper so the caller can keep using the old build* style if desired.
-/// Now it does NOT require passing anything.
 Widget buildStatsTabFromState() => const StatsTab();

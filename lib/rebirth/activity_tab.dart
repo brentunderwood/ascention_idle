@@ -60,7 +60,7 @@ class _ActivityTabState extends State<ActivityTab> {
       'Descend into dangerous depths to hunt powerful monsters, demons, and aberrations.',
       icon: Icons.shield,
       lockedByDefault: true,
-      unlockCost: 1000,
+      unlockCost: 10000,
     ),
   ];
 

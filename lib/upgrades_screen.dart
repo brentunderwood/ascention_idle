@@ -1,3 +1,6 @@
+// ==================================
+// upgrades_screen.dart (UPDATED - FULL FILE)
+// ==================================
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -14,22 +17,22 @@ import 'utilities/display_functions.dart';
 
 /// Upgrades: map<cardId, count> stored as JSON.
 /// This matches kCardUpgradeCountsKey in idle_game_screen.dart.
-/// NOTE: We store these **per mode** by prefixing with 'antimatter_' when needed.
+/// NOTE: We store these **per mode** by prefixing with 'antimatter_' or 'monster_' when needed.
 const String kCardUpgradeCountsKey = 'card_upgrade_counts';
 
 /// Snapshot of which cards (and at what level) are upgradeable this run.
-/// This is written at rebirth time and remains fixed until the next rebirth.
-/// NOTE: We now treat the snapshot as the frozen set of card IDs,
-///       and store it **per mode** using the same prefix convention.
 const String kUpgradeDeckSnapshotKey = 'rebirth_upgrade_deck_snapshot';
+
+/// Monster-mode: selected tactic ("head", "body", "hyde", "aura").
+/// IMPORTANT: This key is ALREADY namespaced ("monster_..."), so do NOT double-prefix it.
+const String kMonsterAttackModeKey = 'monster_attack_mode';
 
 class UpgradesScreen extends StatefulWidget {
   final double currentResource;
   final String resourceLabel;
   final ValueChanged<double> onSpendResource;
 
-  /// Callback into IdleGameScreen so it can apply per-card effects
-  /// (e.g., modify orePerSecond).
+  /// Callback into IdleGameScreen so it can apply per-card effects.
   final void Function(GameCard card, int cardLevel, int upgradesThisRun)
   onCardUpgradeEffect;
 
@@ -49,7 +52,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   SharedPreferences? _prefs;
   bool _loading = true;
 
-  /// Current game mode: 'gold' or 'antimatter'.
+  /// Current game mode: 'gold', 'antimatter', or 'monster'.
   String _gameMode = 'gold';
 
   /// SharedPreferences key for the active game mode.
@@ -62,11 +65,20 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
   /// One entry per upgrade row.
   List<_UpgradeRowData> _rows = [];
 
+  /// Monster mode: selected tactic.
+  String _monsterAttackMode = 'head';
+
   /// Helper to add per-mode prefix to keys:
   ///  - gold: baseKey as-is
   ///  - antimatter: 'antimatter_<baseKey>'
+  ///  - monster: 'monster_<baseKey>'
+  ///
+  /// NOTE: Monster-only keys like 'monster_attack_mode' are ALREADY namespaced,
+  /// so we do NOT want 'monster_monster_attack_mode'. We only use this
+  /// for shared keys that are mode-specific.
   String _modeKey(String baseKey, String gameMode) {
     if (gameMode == 'antimatter') return 'antimatter_$baseKey';
+    if (gameMode == 'monster') return 'monster_$baseKey';
     return baseKey;
   }
 
@@ -76,7 +88,11 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
 
     if (storedMode == 'mine_gold') return 'gold';
     if (storedMode == 'create_antimatter') return 'antimatter';
-    if (storedMode == 'gold' || storedMode == 'antimatter') {
+    if (storedMode == 'monster' || storedMode == 'monster_hunting') return 'monster';
+
+    if (storedMode == 'gold' ||
+        storedMode == 'antimatter' ||
+        storedMode == 'monster') {
       return storedMode!;
     }
     return 'gold';
@@ -88,12 +104,60 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     _loadData();
   }
 
+  // -------------------------
+  // MONSTER TACTIC PREF I/O
+  // -------------------------
+  String _normalizeMonsterMode(String raw) {
+    switch (raw) {
+      case 'head':
+      case 'body':
+      case 'hyde':
+      case 'aura':
+        return raw;
+      default:
+        return 'head';
+    }
+  }
+
+  String _readMonsterAttackMode(SharedPreferences prefs) {
+    // Canonical key (do NOT double-prefix)
+    final v1 = prefs.getString(kMonsterAttackModeKey);
+
+    // Legacy key some of your code may have used earlier:
+    final v2 = prefs.getString(_modeKey(kMonsterAttackModeKey, 'monster')); // monster_monster_attack_mode
+
+    final String? chosen = (v1 != null && v1.isNotEmpty) ? v1 : v2;
+    return _normalizeMonsterMode(chosen ?? 'head');
+  }
+
+  Future<void> _writeMonsterAttackMode(SharedPreferences prefs, String mode) async {
+    final normalized = _normalizeMonsterMode(mode);
+
+    // Write canonical
+    await prefs.setString(kMonsterAttackModeKey, normalized);
+
+    // Also write legacy fallback to avoid any older reads snapping back
+    await prefs.setString(_modeKey(kMonsterAttackModeKey, 'monster'), normalized);
+  }
+
   Future<void> _loadData() async {
     _prefs ??= await SharedPreferences.getInstance();
     final prefs = _prefs!;
 
     _gameMode = _resolveCurrentGameMode(prefs);
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
+
+    // ✅ Monster mode: ignore deck + card upgrades; show 4 fixed actions.
+    if (_gameMode == 'monster') {
+      final saved = _readMonsterAttackMode(prefs);
+      setState(() {
+        _monsterAttackMode = saved;
+        _loading = false;
+        _rows = [];
+        _upgradeCounts = {};
+      });
+      return;
+    }
 
     // 1) Load upgrade counts (per run, PER MODE).
     final countsJson = prefs.getString(mk(kCardUpgradeCountsKey));
@@ -147,12 +211,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     return {for (final oc in repo.allOwnedCards) oc.cardId: oc};
   }
 
-  /// Attempts to build upgrade rows from the frozen snapshot (PER MODE).
-  /// Returns null or empty list if snapshot is missing/invalid.
-  ///
-  /// IMPORTANT: We only use the snapshot to fix the *set of cards*.
-  /// The cardLevel is always taken from the current collection (OwnedCard.level),
-  /// falling back to the snapshot level or baseLevel if needed.
   Future<List<_UpgradeRowData>?> _buildRowsFromSnapshotIfAvailable({
     required Map<String, int> counts,
   }) async {
@@ -177,7 +235,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
         final card = CardCatalog.getById(cardId);
         if (card == null) continue;
 
-        // Snapshot may contain a 'level' field from older runs; fallback only.
         final snapshotLevelRaw = entry['level'];
         int snapshotLevel = 1;
         if (snapshotLevelRaw is int) {
@@ -208,8 +265,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     }
   }
 
-  /// Reads the *current* active deck & collection, builds rows, and writes snapshot.
-  /// This is done PER MODE.
   Future<List<_UpgradeRowData>> _buildRowsFromCurrentDeckAndCreateSnapshot({
     required Map<String, int> counts,
   }) async {
@@ -217,7 +272,6 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     final mode = _gameMode;
     String mk(String baseKey) => _modeKey(baseKey, mode);
 
-    // Resolve active deck cards via repository (per-mode deck prefs).
     final activeCards =
     await PlayerCollectionRepository.instance.getCurrentActiveDeckCards(
       prefs: prefs,
@@ -245,7 +299,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
 
       snapshotList.add({
         'cardId': card.id,
-        'level': cardLevel, // kept for backward compatibility / debugging
+        'level': cardLevel,
       });
     }
 
@@ -262,13 +316,13 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     await prefs.setString(mk(kCardUpgradeCountsKey), jsonEncode(mapToSave));
   }
 
-  /// cost = baseCost(rank, cardLevel) * [costScalingFactor(cardLevel)]^ownedCount
   double _computeNextCost({
     required GameCard card,
     required int cardLevel,
     required int ownedCount,
   }) {
-    final double baseCost = CardEffects.baseCost(rank: card.rank, level: cardLevel);
+    final double baseCost =
+    CardEffects.baseCost(rank: card.rank, level: cardLevel);
     final double scaling = CardEffects.costScalingFactor(level: cardLevel);
     return baseCost * math.pow(scaling, ownedCount);
   }
@@ -327,6 +381,160 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
     );
   }
 
+  // =========================
+  // MONSTER MODE UI
+  // =========================
+  Future<void> _setMonsterAttackMode(String mode) async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final prefs = _prefs!;
+
+    await _writeMonsterAttackMode(prefs, mode);
+
+    if (!mounted) return;
+    setState(() {
+      _monsterAttackMode = _normalizeMonsterMode(mode);
+    });
+  }
+
+  Widget _buildMonsterActionTile({
+    required String id,
+    required String title,
+    required String description,
+  }) {
+    final bool selected = _monsterAttackMode == id;
+
+    return InkWell(
+      onTap: () => _setMonsterAttackMode(id),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: selected
+              ? Colors.amber.withOpacity(0.18)
+              : Colors.black.withOpacity(0.45),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? Colors.amber : Colors.white24,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              color: selected ? Colors.amber : Colors.white70,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: [
+                        Shadow(
+                          blurRadius: 4,
+                          color: Colors.black54,
+                          offset: Offset(1, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMonsterModeUpgrades() {
+    return Padding(
+      padding: const EdgeInsets.all(12.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Combat Tactics',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              shadows: [
+                Shadow(
+                  blurRadius: 4,
+                  color: Colors.black54,
+                  offset: Offset(1, 1),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Monster mode ignores your deck. Pick one action; it applies every second.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 12),
+          _buildMonsterActionTile(
+            id: 'head',
+            title: 'Attack Head',
+            description:
+            'Deals HP damage each second based on your Attack × Rage and the monster’s Def/Aura.',
+          ),
+          const SizedBox(height: 10),
+          _buildMonsterActionTile(
+            id: 'body',
+            title: 'Attack Body',
+            description: 'Reduces the monster’s Regen each second.',
+          ),
+          const SizedBox(height: 10),
+          _buildMonsterActionTile(
+            id: 'hyde',
+            title: 'Attack Hyde',
+            description: 'Reduces the monster’s Def each second.',
+          ),
+          const SizedBox(height: 10),
+          _buildMonsterActionTile(
+            id: 'aura',
+            title: 'Attack Aura',
+            description: 'Reduces the monster’s Aura each second.',
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.35),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: const Text(
+              'Note: Your Rage decreases by 1 per second (min 1). The monster regenerates HP each second equal to its current Regen stat.',
+              style: TextStyle(color: Colors.white70),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =========================
+  // NORMAL MODE UI
+  // =========================
   Widget _buildUpgradeRow(_UpgradeRowData row) {
     final card = row.card;
     final ownedCount = row.ownedCount;
@@ -482,6 +690,11 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    // ✅ Monster mode special UI
+    if (_gameMode == 'monster') {
+      return _buildMonsterModeUpgrades();
+    }
+
     if (_rows.isEmpty) {
       return const Center(
         child: Text(
@@ -514,11 +727,7 @@ class _UpgradesScreenState extends State<UpgradesScreen> {
 class _UpgradeRowData {
   final GameCard card;
   final int ownedCount;
-
-  /// Player's level for this card (from OwnedCard.level or snapshot).
   final int cardLevel;
-
-  /// The actual OwnedCard from the collection, if present.
   final OwnedCard? owned;
 
   const _UpgradeRowData({

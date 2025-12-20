@@ -1,11 +1,11 @@
 // ==================================
-// idle_game_state.dart (FULL FILE)
+// idle_game_state.dart (UPDATED - FULL FILE)
 // ==================================
 part of 'idle_game_screen.dart';
 
 class _Nugget {
   final int id;
-  final Offset position; // absolute position inside the play area
+  final Offset position;
   final DateTime spawnTime;
 
   _Nugget({
@@ -27,16 +27,16 @@ const String kClickMultiplicityKey = 'click_multiplicity';
 /// Key for ore-per-second coefficient that converts base click into OPS.
 const String kBaseClickOpsCoeffKey = 'base_click_ops_coeff';
 
-/// NEW: Per-click transfer amount from ore/sec -> ore/click (per-mode, saved).
+/// Per-click transfer amount from ore/sec -> ore/click (per-mode, saved).
 const String kOrePerSecondTransferKey = 'ore_per_second_transfer';
 
-/// NEW: last time the rock was clicked (per-mode, resets on rebirth).
+/// last time the rock was clicked (per-mode, resets on rebirth).
 const String kLastRockClickTimeKey = 'last_rock_click_millis';
 
-/// NEW: idle boost value (per-mode, resets on rebirth).
+/// idle boost value (per-mode, resets on rebirth).
 const String kIdleBoostKey = 'idle_boost';
 
-/// NEW: time-aging mechanics (per-mode, reset on rebirth).
+/// time-aging mechanics (per-mode, reset on rebirth).
 const String kClickAgingKey = 'click_aging';
 const String kClickTimePowerKey = 'click_time_power';
 const String kRpsAgingKey = 'rps_aging';
@@ -44,51 +44,46 @@ const String kRpsTimePowerKey = 'rps_time_power';
 const String kGpsAgingKey = 'gps_aging';
 const String kGpsTimePowerKey = 'gps_time_power';
 
-/// NEW: bonus "tics per second" (per-mode, reset on rebirth).
-/// Interpreted as "extra simulated seconds" each real second, silently.
+/// bonus "tics per second" (per-mode, reset on rebirth).
 const String kTicsPerSecondKey = 'tics_per_second';
 
-/// Key for antimatter polynomial per-term scalars (per-mode).
+/// antimatter polynomial per-term scalars (per-mode).
 const String kAntimatterPolynomialScalarsKey = 'antimatter_polynomial_scalars';
 
-/// Keys for click and manual-click-cycle tracking.
+/// click and manual-click-cycle tracking.
 const String kClicksThisRunKey = 'clicks_this_run';
 const String kTotalClicksKey = 'total_clicks';
 const String kManualClickCyclesThisRunKey = 'manual_click_cycles_this_run';
 const String kTotalManualClickCyclesKey = 'total_manual_click_cycles';
 const String kMaxCardCountKey = 'max_card_count';
 
-/// Helper: per-mode key mapping.
-/// For gameMode == 'gold' -> returns [baseKey] as-is (backwards compatible).
-/// For gameMode == 'antimatter' -> returns 'antimatter_<baseKey>'.
+/// per-mode key mapping.
+/// - gold: base key
+/// - antimatter: antimatter_<baseKey>
+/// - monster: monster_<baseKey>
 String _modeKey(String baseKey, String gameMode) {
-  if (gameMode == 'antimatter') {
-    return 'antimatter_$baseKey';
-  }
-  // default: gold
+  if (gameMode == 'antimatter') return 'antimatter_$baseKey';
+  if (gameMode == 'monster') return 'monster_$baseKey';
   return baseKey;
 }
 
-/// Main game state for the idle game.
-///
-/// Implements [IdleGameEffectTarget] so card effects can modify the
-/// current run's values (ore, orePerSecond, etc.) in a controlled way.
 class _IdleGameScreenState extends State<IdleGameScreen>
     with
         SingleTickerProviderStateMixin,
         IdleGameEffectTargetMixin,
         RockDisplayMixin,
-
-    // ✅ FIX: these mixins MUST NOT use `on _IdleGameScreenState`,
-    // or you'll create a superinterface cycle.
         IdleGameGoldMixin,
         IdleGameAntimatterMixin,
-        IdleGameRebirthMixin {
+        IdleGameRebirthMixin,
+        IdleGameMonsterMixin {
   int _currentTabIndex = 0;
 
-  /// Active game mode for the *current run*: 'gold' or 'antimatter'.
+  /// Active game mode for the current run: 'gold', 'antimatter', or 'monster'.
   String _gameMode = 'gold';
 
+  // ======================
+  // GOLD/ANTIMATTER STATE
+  // ======================
   double _goldOre = 0;
   double _totalGoldOre = 0;
 
@@ -98,8 +93,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   /// Dark matter resource (meta) – SHARED across all modes.
   double _darkMatter = 0.0;
 
-  /// Pending dark matter reward (accumulated every tic in antimatter mode,
-  /// granted on rebirth).
+  /// Pending dark matter reward (granted on rebirth).
   double _pendingDarkMatter = 0.0;
 
   double _orePerSecond = 0;
@@ -107,23 +101,11 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   double _baseOrePerClick = 0.0;
   double _bonusOrePerClick = 0.0;
 
-  /// NEW: amount transferred from ore/sec -> ore/click on each rock click.
-  /// Saved per-mode. Default = 0.0.
   double _orePerSecondTransfer = 0.0;
 
-  /// NEW: idle boost value (starts at 0, reset on rebirth).
-  /// Saved per-mode.
   double _idleBoost = 0.0;
-
-  /// NEW: last time the rock was clicked (reset on rebirth).
-  /// Saved per-mode so it survives app restarts within the run.
   DateTime? _lastRockClickTime;
 
-  /// NEW: time-aging mechanics (reset on rebirth, stored per-mode).
-  ///
-  /// - clickTimePower increases by clickAging every second; multiplies ore/click
-  /// - rpsTimePower increases by rpsAging every second; multiplies ore/sec
-  /// - gpsTimePower increases by gpsAging every second; adds refined gold/sec
   double _clickAging = 0.0;
   double _clickTimePower = 1.0;
 
@@ -133,84 +115,99 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   double _gpsAging = 0.0;
   double _gpsTimePower = 0.0;
 
-  /// NEW: bonus simulated seconds each real second (silent).
   int _ticsPerSecond = 0;
 
-  /// Click/OPS coefficients – RESET on rebirth, stored per-mode.
   double _gpsClickCoeff = 0.0;
   double _totalOreClickCoeff = 0.0;
   double _clickMultiplicity = 1.0;
   double _baseClickOpsCoeff = 0.0;
 
-  /// Total rebirths (meta) – SHARED across all modes.
   int _rebirthCount = 0;
-
-  /// Total refined gold lifetime (meta) – SHARED across all modes.
   double _totalRefinedGold = 0;
 
   int _momentumClicks = 0;
   DateTime? _lastClickTime;
 
-  /// Momentum upgrade parameters – RESET on rebirth, stored per-mode.
   double _momentumCap = 0.0;
   double _momentumScale = 0.0;
 
-  /// Cached value for previewing how much will be gained on the next click.
   double _lastComputedOrePerClick = 1.0;
 
-  /// Manual clicks on the rock (persisted, reset on rebirth).
   int _manualClickCount = 0;
   int _manualClickPower = 1;
 
-  /// Antimatter state (per-mode, reset on rebirth in antimatter).
   double _antimatter = 0.0;
   double _antimatterPerSecond = 0.0;
   List<int> _antimatterPolynomial = [];
   List<double> _antimatterPolynomialScalars = [];
   int _currentTicNumber = 0;
 
-  /// Tracked stats.
   double _manualClickCyclesThisRun = 0.0;
   double _totalManualClickCycles = 0.0;
   int _clicksThisRun = 0;
   int _totalClicks = 0;
   int _maxCardCount = 0;
 
-  /// Frenzy spell state (per-mode).
   bool _spellFrenzyActive = false;
   DateTime? _spellFrenzyLastTriggerTime;
   double _spellFrenzyDurationSeconds = 0.0;
   double _spellFrenzyCooldownSeconds = 0.0;
   double _spellFrenzyMultiplier = 1.0;
 
-  /// Multipliers
   double _rebirthMultiplier = 1.0;
   double _overallMultiplier = 1.0;
   double _maxGoldMultiplier = 1.0;
   double _achievementMultiplier = 1.0;
 
-  /// Random nugget spawn chance (probability per second).
   double _randomSpawnChance = 0.0;
-
-  /// Bonus rebirth gold accumulated from clicking nuggets this run.
   int _bonusRebirthGoldFromNuggets = 0;
 
-  /// Nugget state: multiple nuggets allowed.
   final List<_Nugget> _nuggets = [];
   int _nextNuggetId = 0;
-
-  /// Size of the main play area (between top stats and rebirth button).
   Size? _playAreaSize;
 
-  /// Animation for nugget rotation.
   late final AnimationController _nuggetRotationController;
-
-  /// RNG for spawns and bonus rolls.
   final math.Random _rng = math.Random();
 
   Timer? _timer;
   SharedPreferences? _prefs;
   DateTime? _lastActiveTime;
+
+  // ======================
+  // MONSTER MODE STATE
+  // ======================
+  int _monsterPlayerLevel = 1;
+
+  /// Player RAGE (stored under the "range" key for compatibility).
+  double _monsterPlayerRage = 1.0;
+
+  /// Player attack (see monster rules). We keep it int.
+  int _monsterPlayerAttack = 1;
+
+  int _monsterPlayerExperience = 0;
+
+  /// Selected combat tactic: "head", "body", "hyde", "aura"
+  String _monsterAttackMode = 'head';
+
+  String _monsterClassRaw = '';
+  int _monsterRarity = 1;
+  int _monsterLevel = 1;
+  int _monsterStatPoints = 0;
+
+  double _monsterBaseHp = 0.0;
+  double _monsterBaseDef = 0.0;
+  double _monsterBaseRegen = 0.0;
+  double _monsterBaseAura = 0.0;
+
+  double _monsterCurrentHp = 0.0;
+  double _monsterCurrentDef = 0.0;
+  double _monsterCurrentRegen = 0.0;
+  double _monsterCurrentAura = 0.0;
+
+  int _monsterKillCount = 0;
+
+  String _monsterName = '';
+  String _monsterImagePath = '';
 
   @override
   void initState() {
@@ -231,7 +228,15 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   Future<void> _initAndStart() async {
     await PlayerCollectionRepository.instance.init();
     await _loadProgress();
-    await _applyOfflineProgress();
+
+    // Monster mode doesn't use offline ore production logic; keep it simple.
+    if (_gameMode != 'monster') {
+      await _applyOfflineProgress();
+    } else {
+      ensureMonsterInitialized();
+      await _saveProgress();
+    }
+
     await _evaluateAndApplyAchievements();
     _updatePreviewPerClick();
     _startTimer();
@@ -245,7 +250,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     super.dispose();
   }
 
-  /// Load the active game mode and then the per-mode state.
   Future<void> _loadProgress() async {
     _prefs ??= await SharedPreferences.getInstance();
 
@@ -256,7 +260,11 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       resolvedMode = 'gold';
     } else if (storedMode == 'create_antimatter') {
       resolvedMode = 'antimatter';
-    } else if (storedMode == 'gold' || storedMode == 'antimatter') {
+    } else if (storedMode == 'monster' || storedMode == 'monster_hunting') {
+      resolvedMode = 'monster';
+    } else if (storedMode == 'gold' ||
+        storedMode == 'antimatter' ||
+        storedMode == 'monster') {
       resolvedMode = storedMode!;
     } else {
       resolvedMode = 'gold';
@@ -269,7 +277,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _loadModeSpecificProgress();
   }
 
-  /// Helpers for reading shared (global) values, with fallback from old per-mode keys.
   double? _readGlobalDoubleWithFallback(String baseKey) {
     final direct = _prefs!.getDouble(baseKey);
     if (direct != null) return direct;
@@ -282,12 +289,25 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     return _prefs!.getInt(_modeKey(baseKey, _gameMode));
   }
 
-  /// Load all per-mode state variables for the current [_gameMode].
   Future<void> _loadModeSpecificProgress() async {
     _prefs ??= await SharedPreferences.getInstance();
+
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
 
-    // ========= PER-MODE / PER-RUN =========
+    // ✅ NEW: monster keys should ALWAYS be stored under monster_... regardless of current _gameMode.
+    String mkMonster(String baseKey) => _modeKey(baseKey, 'monster');
+
+    // Back-compat helpers: try monster_ key first, then current-mode key, then raw base.
+    int? readMonsterInt(String baseKey) =>
+        _prefs!.getInt(mkMonster(baseKey)) ?? _prefs!.getInt(mk(baseKey)) ?? _prefs!.getInt(baseKey);
+
+    double? readMonsterDouble(String baseKey) =>
+        _prefs!.getDouble(mkMonster(baseKey)) ?? _prefs!.getDouble(mk(baseKey)) ?? _prefs!.getDouble(baseKey);
+
+    String? readMonsterString(String baseKey) =>
+        _prefs!.getString(mkMonster(baseKey)) ?? _prefs!.getString(mk(baseKey)) ?? _prefs!.getString(baseKey);
+
+    // ========= PER-MODE =========
     final storedGoldOre = _prefs!.getDouble(mk(kGoldOreKey));
     final storedTotalGoldOre = _prefs!.getDouble(mk(kTotalGoldOreKey));
     final storedOrePerSecond = _prefs!.getDouble(mk(kOrePerSecondKey));
@@ -335,12 +355,39 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     final storedClicksThisRun = _prefs!.getInt(mk(kClicksThisRunKey));
     final storedManualClickCyclesThisRun = _prefs!.getDouble(mk(kManualClickCyclesThisRunKey));
 
-    // Antimatter per-mode
     final storedAntimatter = _prefs!.getDouble(mk(kAntimatterKey));
     final storedAntimatterPerSecond = _prefs!.getDouble(mk(kAntimatterPerSecondKey));
     final storedPolyString = _prefs!.getString(mk(kAntimatterPolynomialKey));
     final storedPolyScalarsString = _prefs!.getString(mk(kAntimatterPolynomialScalarsKey));
     final storedCurrentTic = _prefs!.getInt(mk(kCurrentTicNumberKey));
+
+    // ========= MONSTER (ALWAYS monster_...) =========
+    final storedMonsterPlayerLevel = readMonsterInt(kMonsterPlayerLevelKey);
+    final storedMonsterPlayerRage = readMonsterDouble(kMonsterPlayerRangeKey); // stored under "range"
+    final storedMonsterPlayerAttack = readMonsterInt(kMonsterPlayerAttackKey);
+    final storedMonsterPlayerExperience = readMonsterInt(kMonsterPlayerExperienceKey);
+
+    final storedMonsterAttackMode = readMonsterString(kMonsterAttackModeKey);
+
+    final storedMonsterClass = readMonsterString(kMonsterClassKey);
+    final storedMonsterRarity = readMonsterInt(kMonsterRarityKey);
+    final storedMonsterLevel = readMonsterInt(kMonsterLevelKey);
+    final storedMonsterStatPoints = readMonsterInt(kMonsterStatPointsKey);
+
+    final storedBaseHp = readMonsterDouble(kMonsterBaseHpKey);
+    final storedBaseDef = readMonsterDouble(kMonsterBaseDefKey);
+    final storedBaseRegen = readMonsterDouble(kMonsterBaseRegenKey);
+    final storedBaseAura = readMonsterDouble(kMonsterBaseAuraKey);
+
+    final storedCurHp = readMonsterDouble(kMonsterCurrentHpKey);
+    final storedCurDef = readMonsterDouble(kMonsterCurrentDefKey);
+    final storedCurRegen = readMonsterDouble(kMonsterCurrentRegenKey);
+    final storedCurAura = readMonsterDouble(kMonsterCurrentAuraKey);
+
+    final storedKillCount = readMonsterInt(kMonsterKillCountKey);
+
+    final storedMonsterName = readMonsterString(kMonsterNameKey);
+    final storedMonsterImagePath = readMonsterString(kMonsterImagePathKey);
 
     // ========= SHARED META =========
     final storedGold = _readGlobalDoubleWithFallback(kGoldKey);
@@ -393,7 +440,6 @@ class _IdleGameScreenState extends State<IdleGameScreen>
       }
 
       _baseOrePerClick = storedBaseOrePerClick ?? 0.0;
-
       _orePerSecondTransfer = storedOrePerSecondTransfer ?? 0.0;
 
       _idleBoost = storedIdleBoost ?? 0.0;
@@ -417,15 +463,17 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       _manualClickCount = storedManualClicks ?? 0;
       _manualClickPower = storedManualClickPower ?? 1;
-      _lastActiveTime =
-      storedLastActive != null ? DateTime.fromMillisecondsSinceEpoch(storedLastActive) : null;
+      _lastActiveTime = storedLastActive != null
+          ? DateTime.fromMillisecondsSinceEpoch(storedLastActive)
+          : null;
 
       _spellFrenzyActive = storedFrenzyActive ?? false;
       _spellFrenzyDurationSeconds = storedFrenzyDuration ?? 0.0;
       _spellFrenzyCooldownSeconds = storedFrenzyCooldown ?? 0.0;
       _spellFrenzyMultiplier = storedFrenzyMultiplier ?? 1.0;
-      _spellFrenzyLastTriggerTime =
-      storedFrenzyLastTrigger != null ? DateTime.fromMillisecondsSinceEpoch(storedFrenzyLastTrigger) : null;
+      _spellFrenzyLastTriggerTime = storedFrenzyLastTrigger != null
+          ? DateTime.fromMillisecondsSinceEpoch(storedFrenzyLastTrigger)
+          : null;
 
       _momentumCap = storedMomentumCap ?? 0.0;
       _momentumScale = storedMomentumScale ?? 0.0;
@@ -463,7 +511,50 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
       _darkMatter = storedDarkMatter ?? 0.0;
       _pendingDarkMatter = storedPendingDarkMatter ?? 0.0;
+
+      // Monster (always monster_...)
+      _monsterPlayerLevel = math.max(1, storedMonsterPlayerLevel ?? 1);
+
+      final double fallbackRage = (_monsterPlayerLevel * _monsterPlayerLevel).toDouble();
+      _monsterPlayerRage =
+          (storedMonsterPlayerRage ?? fallbackRage).clamp(1.0, double.infinity);
+
+      _monsterKillCount = math.max(0, storedKillCount ?? 0);
+
+      // Attack = kill count (min 1 so it isn't a hard lock)
+      _monsterPlayerAttack = math.max(
+        1,
+        storedMonsterPlayerAttack ?? _monsterKillCount,
+      );
+
+      _monsterPlayerExperience = math.max(0, storedMonsterPlayerExperience ?? 0);
+
+      _monsterAttackMode = (storedMonsterAttackMode == null || storedMonsterAttackMode.isEmpty)
+          ? 'head'
+          : storedMonsterAttackMode;
+
+      _monsterClassRaw = storedMonsterClass ?? '';
+      _monsterRarity = math.max(1, storedMonsterRarity ?? 1);
+      _monsterLevel = math.max(1, storedMonsterLevel ?? 1);
+      _monsterStatPoints = math.max(0, storedMonsterStatPoints ?? 0);
+
+      _monsterBaseHp = math.max(0.0, storedBaseHp ?? 0.0);
+      _monsterBaseDef = math.max(0.0, storedBaseDef ?? 0.0);
+      _monsterBaseRegen = math.max(0.0, storedBaseRegen ?? 0.0);
+      _monsterBaseAura = math.max(0.0, storedBaseAura ?? 0.0);
+
+      _monsterCurrentHp = (storedCurHp ?? 0.0).clamp(0.0, _monsterBaseHp);
+      _monsterCurrentDef = (storedCurDef ?? 0.0).clamp(0.0, _monsterBaseDef);
+      _monsterCurrentRegen = (storedCurRegen ?? 0.0).clamp(0.0, _monsterBaseRegen);
+      _monsterCurrentAura = (storedCurAura ?? 0.0).clamp(0.0, _monsterBaseAura);
+
+      _monsterName = storedMonsterName ?? '';
+      _monsterImagePath = storedMonsterImagePath ?? '';
     });
+
+    if (_gameMode == 'monster') {
+      ensureMonsterInitialized();
+    }
   }
 
   Future<void> _saveProgress() async {
@@ -471,6 +562,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     _lastActiveTime = DateTime.now();
 
     String mk(String baseKey) => _modeKey(baseKey, _gameMode);
+
+    // ✅ NEW: monster keys should ALWAYS be stored under monster_... regardless of current _gameMode.
+    String mkMonster(String baseKey) => _modeKey(baseKey, 'monster');
 
     await _prefs!.setDouble(mk(kGoldOreKey), _goldOre);
     await _prefs!.setDouble(mk(kTotalGoldOreKey), _totalGoldOre);
@@ -481,7 +575,10 @@ class _IdleGameScreenState extends State<IdleGameScreen>
 
     await _prefs!.setDouble(mk(kIdleBoostKey), _idleBoost);
     if (_lastRockClickTime != null) {
-      await _prefs!.setInt(mk(kLastRockClickTimeKey), _lastRockClickTime!.millisecondsSinceEpoch);
+      await _prefs!.setInt(
+        mk(kLastRockClickTimeKey),
+        _lastRockClickTime!.millisecondsSinceEpoch,
+      );
     } else {
       await _prefs!.remove(mk(kLastRockClickTimeKey));
     }
@@ -535,9 +632,40 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setDouble(mk(kAntimatterKey), _antimatter);
     await _prefs!.setDouble(mk(kAntimatterPerSecondKey), _antimatterPerSecond);
     await _prefs!.setString(mk(kAntimatterPolynomialKey), jsonEncode(_antimatterPolynomial));
-    await _prefs!.setString(mk(kAntimatterPolynomialScalarsKey), jsonEncode(_antimatterPolynomialScalars));
+    await _prefs!.setString(
+      mk(kAntimatterPolynomialScalarsKey),
+      jsonEncode(_antimatterPolynomialScalars),
+    );
     await _prefs!.setInt(mk(kCurrentTicNumberKey), _currentTicNumber);
 
+    // ✅ Monster saves (ALWAYS monster_...)
+    await _prefs!.setInt(mkMonster(kMonsterPlayerLevelKey), _monsterPlayerLevel);
+    await _prefs!.setDouble(mkMonster(kMonsterPlayerRangeKey), _monsterPlayerRage); // stored under "range"
+    await _prefs!.setInt(mkMonster(kMonsterPlayerAttackKey), _monsterPlayerAttack);
+    await _prefs!.setInt(mkMonster(kMonsterPlayerExperienceKey), _monsterPlayerExperience);
+
+    await _prefs!.setString(mkMonster(kMonsterAttackModeKey), _monsterAttackMode);
+
+    await _prefs!.setString(mkMonster(kMonsterClassKey), _monsterClassRaw);
+    await _prefs!.setInt(mkMonster(kMonsterRarityKey), _monsterRarity);
+    await _prefs!.setInt(mkMonster(kMonsterLevelKey), _monsterLevel);
+    await _prefs!.setInt(mkMonster(kMonsterStatPointsKey), _monsterStatPoints);
+
+    await _prefs!.setDouble(mkMonster(kMonsterBaseHpKey), _monsterBaseHp);
+    await _prefs!.setDouble(mkMonster(kMonsterBaseDefKey), _monsterBaseDef);
+    await _prefs!.setDouble(mkMonster(kMonsterBaseRegenKey), _monsterBaseRegen);
+    await _prefs!.setDouble(mkMonster(kMonsterBaseAuraKey), _monsterBaseAura);
+
+    await _prefs!.setDouble(mkMonster(kMonsterCurrentHpKey), _monsterCurrentHp);
+    await _prefs!.setDouble(mkMonster(kMonsterCurrentDefKey), _monsterCurrentDef);
+    await _prefs!.setDouble(mkMonster(kMonsterCurrentRegenKey), _monsterCurrentRegen);
+    await _prefs!.setDouble(mkMonster(kMonsterCurrentAuraKey), _monsterCurrentAura);
+
+    await _prefs!.setInt(mkMonster(kMonsterKillCountKey), _monsterKillCount);
+    await _prefs!.setString(mkMonster(kMonsterNameKey), _monsterName);
+    await _prefs!.setString(mkMonster(kMonsterImagePathKey), _monsterImagePath);
+
+    // Shared meta
     await _prefs!.setDouble(kGoldKey, _gold);
     await _prefs!.setDouble(kTotalRefinedGoldKey, _totalRefinedGold);
     await _prefs!.setInt(kRebirthCountKey, _rebirthCount);
@@ -556,7 +684,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
   }
 
   Future<void> _changeGameMode(String newMode) async {
-    if (newMode != 'gold' && newMode != 'antimatter') return;
+    if (newMode != 'gold' && newMode != 'antimatter' && newMode != 'monster') return;
     if (newMode == _gameMode) return;
 
     _prefs ??= await SharedPreferences.getInstance();
@@ -569,7 +697,14 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     await _prefs!.setString(kActiveGameModeKey, _gameMode);
 
     await _loadModeSpecificProgress();
-    await _applyOfflineProgress();
+
+    if (_gameMode != 'monster') {
+      await _applyOfflineProgress();
+    } else {
+      ensureMonsterInitialized();
+      await _saveProgress();
+    }
+
     _updatePreviewPerClick();
   }
 
@@ -584,7 +719,11 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         nextMode = 'gold';
       } else if (storedSelected == 'create_antimatter') {
         nextMode = 'antimatter';
-      } else if (storedSelected == 'antimatter' || storedSelected == 'gold') {
+      } else if (storedSelected == 'monster' || storedSelected == 'monster_hunting') {
+        nextMode = 'monster';
+      } else if (storedSelected == 'antimatter' ||
+          storedSelected == 'gold' ||
+          storedSelected == 'monster') {
         nextMode = storedSelected!;
       } else {
         nextMode = _gameMode;
@@ -606,20 +745,31 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         momentumChanged = true;
       }
 
-      // Aging + GPS refined gold per second.
+      // Aging + GPS refined gold
       _tickAgingAndGps();
 
-      final double effectiveOrePerSecond = _computeOrePerSecond();
+      // Gold/antimatter ore tick only (monster mode does not auto-generate ore)
+      if (_gameMode != 'monster') {
+        final double effectiveOrePerSecond = _computeOrePerSecond();
+        setState(() {
+          _goldOre += effectiveOrePerSecond;
+          _totalGoldOre += effectiveOrePerSecond;
+          _currentTicNumber += 1;
+        });
+      } else {
+        setState(() {
+          _currentTicNumber += 1;
+        });
+      }
 
-      setState(() {
-        _goldOre += effectiveOrePerSecond;
-        _totalGoldOre += effectiveOrePerSecond;
-        _currentTicNumber += 1;
-      });
-
-      // Antimatter + dark matter tick (only in antimatter mode).
+      // Antimatter ticking
       if (_gameMode == 'antimatter') {
         _tickAntimatterSecond(seconds: 1);
+      }
+
+      // Monster ticking (auto-combat, regen, rage decay, etc.)
+      if (_gameMode == 'monster') {
+        tickMonsterSecond(seconds: 1);
       }
 
       TutorialManager.instance.onGoldOreChanged(context, _manualClickCount.toDouble());
@@ -630,8 +780,7 @@ class _IdleGameScreenState extends State<IdleGameScreen>
         _updatePreviewPerClick();
       }
 
-      // Bonus silent tics per second.
-      if (_ticsPerSecond > 0) {
+      if (_ticsPerSecond > 0 && _gameMode != 'monster') {
         await _applyOfflineProgress(
           secondsOverride: _ticsPerSecond,
           showNotification: false,
@@ -643,14 +792,9 @@ class _IdleGameScreenState extends State<IdleGameScreen>
     });
   }
 
-  void _applyCardUpgradeEffect(
-      GameCard card,
-      int cardLevel,
-      int upgradesThisRun,
-      ) {
+  void _applyCardUpgradeEffect(GameCard card, int cardLevel, int upgradesThisRun) {
     setState(() {
       card.cardEffect?.call(this, cardLevel, upgradesThisRun);
-
       if (upgradesThisRun > _maxCardCount) {
         _maxCardCount = upgradesThisRun;
       }

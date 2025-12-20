@@ -1,5 +1,5 @@
 // ==================================
-// idle_game_screen.dart (FULL FILE)
+// idle_game_screen.dart (CHANGED - FULL FILE)
 // ==================================
 import 'dart:async';
 import 'dart:convert';
@@ -14,24 +14,30 @@ import '../cards/player_collection_repository.dart';
 import '../cards/game_card_models.dart';
 import '../upgrades_screen.dart';
 import '../rebirth/achievements_catalog.dart';
-import '../misc_tab.dart'; // misc tab split into its own file
-import '../stats/stats_tab.dart'; // ✅ Stats reads from SharedPreferences now
-import '../tutorial_manager.dart'; // tutorial logic
-import '../utilities/display_functions.dart'; // numeric display helpers
+import '../misc_tab.dart';
+import '../stats/stats_tab.dart';
+import '../tutorial_manager.dart';
+import '../utilities/display_functions.dart';
+
+// ✅ NEW: monster catalog file
+import 'monster_catalog.dart';
 
 part 'idle_game_state.dart';
 part 'idle_game_state_accessors.dart';
 
-// ✅ NEW: split-out logic files
+// ✅ split-out mode files
 part 'idle_game_gold.dart';
 part 'idle_game_antimatter.dart';
 part 'idle_game_rebirth.dart';
+part 'idle_game_monster.dart';
 
 /// Background assets for each game mode.
 const String kGameBackgroundAsset =
     'assets/click_screen_art/gold_mining/background_mine_gold.png';
 const String kAntimatterBackgroundAsset =
     'assets/click_screen_art/background_antimatter.png';
+const String kMonsterBackgroundAsset =
+    'assets/click_screen_art/monster_hunting/background_monster.png';
 
 /// Keys used for local persistence (base keys; actual stored keys are
 /// optionally prefixed by the active game mode).
@@ -46,12 +52,9 @@ const String kTotalRefinedGoldKey = 'total_refined_gold';
 
 /// Dark matter: meta resource earned from antimatter mode.
 const String kDarkMatterKey = 'dark_matter';
-
-/// Pending dark matter reward (keeps growing in antimatter mode and is
-/// granted on rebirth).
 const String kPendingDarkMatterKey = 'pending_dark_matter';
 
-/// Active game mode (current run): 'gold' or 'antimatter'.
+/// Active game mode (current run): 'gold', 'antimatter', or 'monster'.
 const String kActiveGameModeKey = 'active_game_mode';
 
 /// This key is used by the ActivityTab (Next Run tab) in rebirth_screen.dart
@@ -127,19 +130,16 @@ class IdleGameScreen extends StatefulWidget {
 }
 
 /// ============================================
-/// ROCK DISPLAY + GESTURE / VISUALS (MOVED HERE)
+/// ROCK DISPLAY + GESTURE / VISUALS
 /// ============================================
 mixin RockDisplayMixin on State<IdleGameScreen> {
-  /// Animation state for the rock (3D-ish tilt).
   double _rockScale = 1.0;
-  double _rockTiltX = 0.0; // tilt forward/back (based on vertical tap)
-  double _rockTiltY = 0.0; // tilt left/right (based on horizontal tap)
+  double _rockTiltX = 0.0;
+  double _rockTiltY = 0.0;
 
-  /// Small positional offset so the rock can "drag" a bit under the finger.
   double _rockOffsetX = 0.0;
   double _rockOffsetY = 0.0;
 
-  /// Where the initial press happened within the rock, used to compute drag delta.
   Offset? _rockPressLocalPosition;
 
   void resetRockVisuals() {
@@ -196,7 +196,6 @@ mixin RockDisplayMixin on State<IdleGameScreen> {
     final double tiltX = normY * maxTilt;
     final double tiltY = -normX * maxTilt;
 
-    // Visual update only.
     setState(() {
       _rockScale = 0.9;
       _rockTiltX = tiltX;
@@ -206,7 +205,6 @@ mixin RockDisplayMixin on State<IdleGameScreen> {
       _rockOffsetY = 0.0;
     });
 
-    // Economy/state update (no visuals) lives in idle_game_gold.dart now.
     state._performRockClickEconomy(nowOverride: now);
   }
 
@@ -285,12 +283,13 @@ Widget buildIdleGameScaffold(
     _IdleGameScreenState state,
     BuildContext context,
     ) {
-  // Pick background based on current game mode.
-  final String backgroundAsset =
-  state._gameMode == 'antimatter' ? kAntimatterBackgroundAsset : kGameBackgroundAsset;
+  final String backgroundAsset = (state._gameMode == 'antimatter')
+      ? kAntimatterBackgroundAsset
+      : (state._gameMode == 'monster')
+      ? kMonsterBackgroundAsset
+      : kGameBackgroundAsset;
 
   return Scaffold(
-    // Transparent so background image shows fully.
     backgroundColor: Colors.transparent,
     body: Container(
       decoration: BoxDecoration(
@@ -304,7 +303,6 @@ Widget buildIdleGameScaffold(
           children: [
             buildTopBar(state),
             const SizedBox(height: 8),
-            // Main tab content area fills everything down to bottom nav bar.
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12.0),
@@ -315,8 +313,6 @@ Widget buildIdleGameScaffold(
         ),
       ),
     ),
-
-    // Bottom tab navigation
     bottomNavigationBar: BottomNavigationBar(
       currentIndex: state._currentTabIndex,
       type: BottomNavigationBarType.fixed,
@@ -325,7 +321,6 @@ Widget buildIdleGameScaffold(
           state._currentTabIndex = index;
         });
 
-        // Tutorial hook: entering Rebirth tab shows store (step 3 / 4).
         if (index == 2) {
           TutorialManager.instance.onRebirthStoreShown(state.context);
         }
@@ -342,20 +337,14 @@ Widget buildIdleGameScaffold(
   );
 }
 
-/// Top bar:
-/// - In Rebirth tab: refined gold.
-/// - In other tabs:
-///   - If gameMode == 'antimatter': show Antimatter + Antimatter/s box
-///     above the usual Gold Ore / Ore per second.
-///   - If gameMode == 'gold': same as before, plus Ore per click line.
 Widget buildTopBar(_IdleGameScreenState state) {
+  if (state._gameMode == 'monster') {
+    return state.buildMonsterTopBar();
+  }
+
   if (state._currentTabIndex == 2) {
-    // Rebirth tab: show refined gold instead of ore stats.
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16.0,
-        vertical: 12.0,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -398,22 +387,15 @@ Widget buildTopBar(_IdleGameScreenState state) {
 
   final bool isAntimatterMode = state._gameMode == 'antimatter';
 
-  // Gold ore label always refers to the per-mode gold ore value.
   const resourceLabel = 'Gold Ore';
   final orePerClickDisplay = state._currentOrePerClickForDisplay();
-
-  // Use centralized ore-per-second formula so this matches game logic.
   final double effectiveOrePerSecond = state.getOrePerSecond();
 
   return Padding(
-    padding: const EdgeInsets.symmetric(
-      horizontal: 16.0,
-      vertical: 12.0,
-    ),
+    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Antimatter panel (only in antimatter mode)
         if (isAntimatterMode) ...[
           Text(
             'Antimatter: ${factorialDisplay(state._antimatter)}',
@@ -449,8 +431,6 @@ Widget buildTopBar(_IdleGameScreenState state) {
           ),
           const SizedBox(height: 8),
         ],
-
-        // Gold Ore / Ore per second (per-mode values)
         Text(
           '$resourceLabel: ${displayNumber(state._goldOre)}',
           style: const TextStyle(
@@ -484,8 +464,6 @@ Widget buildTopBar(_IdleGameScreenState state) {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 4),
-
-        // Ore per click ONLY in gold mode.
         if (!isAntimatterMode)
           Text(
             'Ore per click: ${displayNumber(orePerClickDisplay)}',
@@ -507,10 +485,8 @@ Widget buildTopBar(_IdleGameScreenState state) {
   );
 }
 
-/// Build the Frenzy button (or nothing if the spell isn't unlocked).
 Widget buildFrenzyButton(_IdleGameScreenState state) {
-  // In antimatter mode, hide Frenzy button (no rock clicking).
-  if (!state._spellFrenzyActive || state._gameMode == 'antimatter') {
+  if (!state._spellFrenzyActive || state._gameMode != 'gold') {
     return const SizedBox.shrink();
   }
 
@@ -520,7 +496,6 @@ Widget buildFrenzyButton(_IdleGameScreenState state) {
   VoidCallback? onPressed;
 
   if (state._spellFrenzyLastTriggerTime == null) {
-    // Never cast before: available immediately.
     label = 'Cast Frenzy';
     onPressed = state._activateFrenzy;
   } else {
@@ -551,43 +526,31 @@ Widget buildFrenzyButton(_IdleGameScreenState state) {
       width: 260,
       child: ElevatedButton(
         onPressed: onPressed,
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-        ),
+        child: Text(label, textAlign: TextAlign.center),
       ),
     ),
   );
 }
 
-/// Nugget widget – small rotating clickable image.
-Widget buildNuggetWidget(
-    _IdleGameScreenState state, {
-      required int nuggetId,
-    }) {
+Widget buildNuggetWidget(_IdleGameScreenState state, {required int nuggetId}) {
   final nugget = state._nuggets.firstWhere((n) => n.id == nuggetId);
 
   final now = DateTime.now();
   final age = now.difference(nugget.spawnTime).inMilliseconds;
 
-  const int totalMs = 10000; // 10 seconds
-  const int fadeMs = 3000; // 3 sec fade in, 3 sec fade out
+  const int totalMs = 10000;
+  const int fadeMs = 3000;
 
   double opacity;
-
   if (age < fadeMs) {
-    // ✔ FADE IN: 0 → 1 over 3 seconds
     opacity = age / fadeMs;
   } else if (age > totalMs - fadeMs) {
-    // ✔ FADE OUT: 1 → 0 over last 3 seconds
     final remaining = totalMs - age;
     opacity = remaining / fadeMs;
   } else {
-    // Fully visible during middle 4 seconds
     opacity = 1.0;
   }
 
-  // Clamp just in case
   opacity = opacity.clamp(0.0, 1.0);
 
   return Opacity(
@@ -601,11 +564,8 @@ Widget buildNuggetWidget(
           animation: state._nuggetRotationController,
           builder: (context, child) {
             final t = state._nuggetRotationController.value;
-            final angle = (t - 0.5) * 0.4; // swing -0.2 ↔ 0.2
-            return Transform.rotate(
-              angle: angle,
-              child: child,
-            );
+            final angle = (t - 0.5) * 0.4;
+            return Transform.rotate(angle: angle, child: child);
           },
           child: Image.asset(
             'assets/click_screen_art/gold_mining/rock_09.png',
@@ -617,7 +577,6 @@ Widget buildNuggetWidget(
   );
 }
 
-/// Returns the widget for the currently selected tab.
 Widget buildTabContent(_IdleGameScreenState state) {
   switch (state._currentTabIndex) {
     case 0:
@@ -627,7 +586,6 @@ Widget buildTabContent(_IdleGameScreenState state) {
     case 2:
       return buildRebirthTab(state);
     case 3:
-    // ✅ Stats now reads from SharedPreferences (gold + antimatter) directly.
       return const StatsTab();
     case 4:
       return buildMiscTab(state);
@@ -637,13 +595,15 @@ Widget buildTabContent(_IdleGameScreenState state) {
 }
 
 Widget buildMainTab(_IdleGameScreenState state) {
+  // ✅ Monster mode main tab is fully handled by monster file.
+  if (state._gameMode == 'monster') {
+    return state.buildMonsterMainTab();
+  }
+
   final double rebirthGold = state._calculateRebirthGold();
   final int phase = state._currentClickPhase();
-
-  // Image changes with phase: rock_0x.png where x is the phase (1–9).
   final String rockAssetPath = 'assets/click_screen_art/gold_mining/rock_0$phase.png';
 
-  // Optional phase-9 banner text above the rock.
   final Widget phaseBanner = (phase == 9 && state._gameMode == 'gold')
       ? const Padding(
     padding: EdgeInsets.only(bottom: 8.0),
@@ -668,32 +628,25 @@ Widget buildMainTab(_IdleGameScreenState state) {
 
   final bool isAntimatterMode = state._gameMode == 'antimatter';
 
-  // Decide button label based on current mode.
   final String rebirthButtonLabel;
   if (isAntimatterMode) {
-    // Pending dark matter reward is the amount that will be gained on rebirth.
     final double pendingDarkMatter = state._pendingDarkMatter;
     rebirthButtonLabel = 'Rebirth and gain ${displayNumber(pendingDarkMatter)} dark matter';
   } else {
     rebirthButtonLabel = 'Rebirth and gain ${rebirthGold.toStringAsFixed(0)} gold';
   }
 
-  // Column fills the available height in the main tab.
-  // Content at top, rebirth button pinned to bottom (above nav bar).
   return Column(
     children: [
-      // Main content area (includes rock and random nuggets).
       Expanded(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            // Update play area size for spawn positioning.
             state._playAreaSize = constraints.biggest;
 
             return Stack(
               children: [
                 if (!isAntimatterMode)
                   Align(
-                    // Move the click object slightly higher on the screen.
                     alignment: const Alignment(0, -0.2),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -713,25 +666,20 @@ Widget buildMainTab(_IdleGameScreenState state) {
                               curve: Curves.easeOut,
                               transformAlignment: Alignment.center,
                               transform: Matrix4.identity()
-                                ..setEntry(3, 2, 0.0015) // perspective
+                                ..setEntry(3, 2, 0.0015)
                                 ..translate(state._rockOffsetX, state._rockOffsetY)
                                 ..scale(state._rockScale)
                                 ..rotateX(state._rockTiltX)
                                 ..rotateY(state._rockTiltY),
-                              child: Image.asset(
-                                rockAssetPath,
-                                fit: BoxFit.contain,
-                              ),
+                              child: Image.asset(rockAssetPath, fit: BoxFit.contain),
                             ),
                           ),
                         ),
-                        // Frenzy button below the click object in gold mode.
                         buildFrenzyButton(state),
                       ],
                     ),
                   )
                 else
-                // Antimatter mode main view: no rock, just a flavor text.
                   Align(
                     alignment: const Alignment(0, -0.2),
                     child: Column(
@@ -758,17 +706,11 @@ Widget buildMainTab(_IdleGameScreenState state) {
                       ],
                     ),
                   ),
-
-                // Multiple random gold nuggets, each positioned absolutely
-                // so they can cover the whole play area without going off-screen.
                 ...state._nuggets.map(
                       (n) => Positioned(
                     left: n.position.dx,
                     top: n.position.dy,
-                    child: buildNuggetWidget(
-                      state,
-                      nuggetId: n.id,
-                    ),
+                    child: buildNuggetWidget(state, nuggetId: n.id),
                   ),
                 ),
               ],
@@ -776,8 +718,6 @@ Widget buildMainTab(_IdleGameScreenState state) {
           },
         ),
       ),
-
-      // Rebirth button at bottom of Main tab only
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
         child: SizedBox(
@@ -793,9 +733,6 @@ Widget buildMainTab(_IdleGameScreenState state) {
 }
 
 Widget buildUpgradesTab(_IdleGameScreenState state) {
-  // The displayed label for the current resource. In antimatter mode we still
-  // call it "Gold Ore" here, but the underlying numbers are per-mode and
-  // saved separately.
   const resourceLabel = 'Gold Ore';
 
   return UpgradesScreen(
@@ -813,7 +750,6 @@ Widget buildUpgradesTab(_IdleGameScreenState state) {
 }
 
 Widget buildRebirthTab(_IdleGameScreenState state) {
-  // Rebirth tab with its own nested tabs (Next Run / Store / Deck / Achievements).
   return RebirthScreen(
     currentGold: state._gold,
     onSpendGold: (amount) {
@@ -827,18 +763,14 @@ Widget buildRebirthTab(_IdleGameScreenState state) {
   );
 }
 
-/// Misc tab with a reset button.
 Widget buildMiscTab(_IdleGameScreenState state) {
   return MiscTab(
     onResetGame: () async {
-      // 1) Clear all saved preferences (game progress, decks, achievements, etc.)
       final prefs = await SharedPreferences.getInstance();
       await prefs.clear();
 
-      // 2) Reset in-memory collection repository so it matches cleared prefs.
       await PlayerCollectionRepository.instance.reset();
 
-      // 3) Restart the game screen from a clean slate.
       if (!state.mounted) return;
 
       Navigator.of(state.context).pushAndRemoveUntil(

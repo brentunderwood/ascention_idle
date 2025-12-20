@@ -7,6 +7,21 @@ part of 'idle_game_screen.dart';
 mixin IdleGameGoldMixin on State<IdleGameScreen> {
   _IdleGameScreenState get _s => this as _IdleGameScreenState;
 
+  // =========================
+  // NEW: Monster Hunter multipliers
+  // =========================
+
+  double _monsterHunterGoldMultiplier() {
+    // Gold multiplier = Hunter Lv (minimum 1).
+    final int lvl = (_s._monsterPlayerLevel <= 0) ? 1 : _s._monsterPlayerLevel;
+    return lvl.toDouble();
+  }
+
+  double _effectiveGoldOverallMultiplier() {
+    // Gold overall multiplier is boosted by Hunter Lv.
+    return _s._overallMultiplier * _monsterHunterGoldMultiplier();
+  }
+
   void _tickAgingAndGps() {
     _s.setState(() {
       _s._clickTimePower = math.max(1.0, _s._clickTimePower + _s._clickAging);
@@ -115,7 +130,7 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
         phaseMult *
         frenzyMult *
         momentumFactor *
-        _s._overallMultiplier *
+        _effectiveGoldOverallMultiplier() *
         _s._clickMultiplicity *
         idleMult *
         timeMult;
@@ -127,11 +142,12 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
     final bool frenzyActiveNow = _isFrenzyCurrentlyActive();
     final double frenzyMult = frenzyActiveNow ? _s._spellFrenzyMultiplier : 1.0;
 
-    final double baseCombined = baseOrePerSecond + _s._baseClickOpsCoeff * (1.0 + _s._baseOrePerClick);
+    final double baseCombined =
+        baseOrePerSecond + _s._baseClickOpsCoeff * (1.0 + _s._baseOrePerClick);
 
     final double timeMult = math.max(1.0, _s._rpsTimePower);
 
-    return baseCombined * frenzyMult * _s._overallMultiplier * timeMult;
+    return baseCombined * frenzyMult * _effectiveGoldOverallMultiplier() * timeMult;
   }
 
   void _updatePreviewPerClick() {
@@ -156,10 +172,14 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
       lowerBound = 0;
       upperBound = 100;
     } else {
-      manualClickCycles = math.log(manualClicks * (scalingFactor - 1) / 100 + 1) / math.log(scalingFactor);
+      manualClickCycles =
+          math.log(manualClicks * (scalingFactor - 1) / 100 + 1) /
+              math.log(scalingFactor);
       manualClickCycles = manualClickCycles.floorToDouble();
       lowerBound = 100 * (math.pow(scalingFactor, manualClickCycles) - 1) / (scalingFactor - 1);
-      upperBound = 100 * (math.pow(scalingFactor, manualClickCycles + 1) - 1) / (scalingFactor - 1);
+      upperBound =
+          100 * (math.pow(scalingFactor, manualClickCycles + 1) - 1) /
+              (scalingFactor - 1);
     }
 
     final double progress = (manualClicks - lowerBound) / (upperBound - lowerBound);
@@ -220,15 +240,6 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
     int? secondsOverride,
     bool showNotification = true,
   }) async {
-    final double baseCoreOps = _s._orePerSecond + _s._bonusOrePerSecond;
-    final double baseClick = 1.0 + _s._baseOrePerClick;
-    final double baseCombined = baseCoreOps + _s._baseClickOpsCoeff * baseClick;
-
-    if (baseCombined <= 0) {
-      await _s._saveProgress();
-      return;
-    }
-
     int seconds;
     Duration diff;
 
@@ -255,6 +266,32 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
       }
     }
 
+    // ✅ Monster offline simulation: keep fighting + rage decay while offline.
+    // (No ore production in monster mode.)
+    if (_s._gameMode == 'monster') {
+      _s.ensureMonsterInitialized();
+
+      _s.setState(() {
+        _s._currentTicNumber += seconds;
+      });
+
+      _s.tickMonsterSecond(seconds: seconds);
+
+      await _s._evaluateAndApplyAchievements();
+      await _s._saveProgress();
+      return;
+    }
+
+    // ---- Normal (gold/antimatter) offline ore logic below ----
+    final double baseCoreOps = _s._orePerSecond + _s._bonusOrePerSecond;
+    final double baseClick = 1.0 + _s._baseOrePerClick;
+    final double baseCombined = baseCoreOps + _s._baseClickOpsCoeff * baseClick;
+
+    if (baseCombined <= 0) {
+      await _s._saveProgress();
+      return;
+    }
+
     final double clickPower0 = _s._clickTimePower;
     final double rpsPower0 = _s._rpsTimePower;
     final double gpsPower0 = _s._gpsTimePower;
@@ -275,6 +312,9 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
     final double finalRpsPower = math.max(1.0, rpsPower0 + _s._rpsAging * seconds);
     final double finalGpsPower = math.max(0.0, gpsPower0 + _s._gpsAging * seconds);
 
+    final double effectiveOverall =
+    (_s._gameMode == 'gold') ? _effectiveGoldOverallMultiplier() : _s._overallMultiplier;
+
     double earned;
 
     if (_s._spellFrenzyActive &&
@@ -284,8 +324,10 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
       final int offlineEndSec = now.millisecondsSinceEpoch ~/ 1000;
       final int offlineStartSec = offlineEndSec - seconds;
 
-      final int frenzyStartSec = _s._spellFrenzyLastTriggerTime!.millisecondsSinceEpoch ~/ 1000;
-      final int frenzyEndSec = frenzyStartSec + _s._spellFrenzyDurationSeconds.round();
+      final int frenzyStartSec =
+          _s._spellFrenzyLastTriggerTime!.millisecondsSinceEpoch ~/ 1000;
+      final int frenzyEndSec =
+          frenzyStartSec + _s._spellFrenzyDurationSeconds.round();
 
       final int overlapStart = math.max(offlineStartSec, frenzyStartSec);
       final int overlapEnd = math.min(offlineEndSec, frenzyEndSec);
@@ -304,13 +346,13 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
         seconds: frenzyOverlap,
       );
 
-      final double normalEarned = baseCombined * _s._overallMultiplier * normalRpsSum;
+      final double normalEarned = baseCombined * effectiveOverall * normalRpsSum;
       final double frenzyEarned =
-          baseCombined * _s._overallMultiplier * _s._spellFrenzyMultiplier * frenzyRpsSum;
+          baseCombined * effectiveOverall * _s._spellFrenzyMultiplier * frenzyRpsSum;
 
       earned = normalEarned + frenzyEarned;
     } else {
-      earned = baseCombined * _s._overallMultiplier * rpsPowerSum;
+      earned = baseCombined * effectiveOverall * rpsPowerSum;
     }
 
     _s.setState(() {
@@ -365,7 +407,8 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
 
     final DateTime now = nowOverride ?? DateTime.now();
 
-    if (_s._lastClickTime == null || now.difference(_s._lastClickTime!) > const Duration(seconds: 10)) {
+    if (_s._lastClickTime == null ||
+        now.difference(_s._lastClickTime!) > const Duration(seconds: 10)) {
       _s._momentumClicks = 0;
     }
     _s._momentumClicks += 1;
@@ -409,6 +452,10 @@ mixin IdleGameGoldMixin on State<IdleGameScreen> {
 
       _s._lastRockClickTime = now;
     });
+
+    // ✅ gold rock taps also increase monster rage by (monster level)^2
+    // ignore: unawaited_futures
+    _s.bumpMonsterRageFromGoldTap();
 
     TutorialManager.instance.onGoldOreChanged(_s.context, _s._manualClickCount.toDouble());
     _s._saveProgress();
