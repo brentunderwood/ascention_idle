@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-class StatsTab extends StatelessWidget {
-  const StatsTab({super.key});
+class StoreTab extends StatelessWidget {
+  const StoreTab({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -9,7 +9,7 @@ class StatsTab extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: Text(
-            'Stats (placeholder)',
+            'Store (placeholder)',
             style: TextStyle(fontSize: 20),
           ),
         ),

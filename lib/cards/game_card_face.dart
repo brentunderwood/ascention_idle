@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'game_card_models.dart';
+import 'card_catalog.dart';
 
 /// Reusable widget that renders a card using its background + art.
 /// Any time you want to show a GameCard, use this so the layering
@@ -62,7 +62,7 @@ class GameCardFace extends StatelessWidget {
           final double starTopPadding = cardHeight * 0.06; // 6% from top
           final double starHorizontalPadding = cardHeight * 0.02;
 
-          final int starCount = card.rank.abs();
+          final int starCount = card.rarity.abs();
 
           return ClipRRect(
             borderRadius: BorderRadius.circular(8),
@@ -71,7 +71,7 @@ class GameCardFace extends StatelessWidget {
               children: [
                 // Background frame
                 Image.asset(
-                  card.backgroundAsset,
+                  _getBackgroundAsset(card),
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) {
                     return Container(
@@ -109,7 +109,7 @@ class GameCardFace extends StatelessWidget {
                       width: artWidth,
                       height: artHeight,
                       child: Image.asset(
-                        card.artAsset,
+                        card.imagePath,
                         fit: BoxFit.contain,
                         errorBuilder: (context, error, stackTrace) {
                           // If art is missing, at least show the base.
@@ -161,4 +161,9 @@ class GameCardFace extends StatelessWidget {
       ),
     );
   }
+
+  String _getBackgroundAsset(GameCard card){
+    return "assets/${card.cardPack}/card_base_${card.cardPack}.png";
+  }
+
 }
