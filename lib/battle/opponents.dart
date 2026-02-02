@@ -37,14 +37,14 @@ class OpponentCatalog {
       ),
     ),
     Opponent(
-      opponentId: 'campaign_tutorial_lv1',
-      name: 'Novice Prospector',
+      opponentId: 'player_default_deck',
+      name: 'Player Default',
       level: 1,
       deck: CardDeck(
         deckId: 'opp_campaign_lv1_deck',
         entries: const [
           DeckCardEntry(
-            cardId: 'lux_aurea_2', // Fool's Gold
+            cardId: 'lux_aurea_2',
             probability: 1.0,
             level: 1,
           ),

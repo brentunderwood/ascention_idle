@@ -19,6 +19,10 @@ typedef CardEffect = void Function(CardContext ctx);
 
 /// Cost signature.
 typedef CardCost = int Function(GameCard card, CardContext ctx);
+
+/// Multiplier *adjustment* function.
+/// NOTE: GameCard now stores a persisted `cardMultiplier` double.
+/// This function is used to compute an adjustment factor during purchase.
 typedef CostMultiplier = double Function(GameCard card, CardContext ctx);
 
 class GameCard {
@@ -36,13 +40,25 @@ class GameCard {
   final int experience;
 
   /// Mutable counters on the instance (optional usage).
+  /// (Kept for compatibility with existing code / templates, but no longer used
+  /// by BattleLogic in the new multiplier-based system.)
   int playCount;
+  int playCountOpp;
+
+  /// Persisted multiplier on the instance (1.0 initially).
+  /// BattleLogic will persist and update this per-side per-cardId.
+  double cardMultiplier;
 
   final CardEffect effect;
   final CardCost cost;
 
+  /// what resource pays for this card's cost (e.g. "gold", "antimatter", etc.)
+  final String costUnits;
+
   final int evolution;
   final bool isPrivate;
+
+  /// Used to compute an adjustment factor when purchasing.
   final CostMultiplier costMultiplier;
 
   /// XP needed per level step for this card (simple curve).
@@ -58,8 +74,11 @@ class GameCard {
     required this.level,
     required this.experience,
     required this.playCount,
+    required this.playCountOpp,
+    required this.cardMultiplier,
     required this.effect,
     required this.cost,
+    required this.costUnits,
     required this.evolution,
     required this.isPrivate,
     required this.costMultiplier,
@@ -70,8 +89,11 @@ class GameCard {
     int? level,
     int? experience,
     int? playCount,
+    int? playCountOpp,
+    double? cardMultiplier,
     String? imagePath,
     String? description,
+    String? costUnits,
   }) {
     return GameCard(
       cardId: cardId,
@@ -83,8 +105,11 @@ class GameCard {
       level: level ?? this.level,
       experience: experience ?? this.experience,
       playCount: playCount ?? this.playCount,
+      playCountOpp: playCountOpp ?? this.playCountOpp,
+      cardMultiplier: cardMultiplier ?? this.cardMultiplier,
       effect: effect,
       cost: cost,
+      costUnits: costUnits ?? this.costUnits,
       evolution: evolution,
       isPrivate: isPrivate,
       costMultiplier: costMultiplier,
@@ -100,17 +125,43 @@ class CardCatalog {
       cardId: 'lux_aurea_1',
       cardName: 'Fool\'s Gold',
       cardPack: 'lux_aurea',
-      description: 'Generate 1 dirt per second',
+      description: 'Generate 1 shared gold per second',
       imagePath: 'assets/lux_aurea/rank_1/lv_1_fools_gold.png',
       rarity: 1,
       level: 1,
       experience: 0,
       playCount: 0,
+      playCountOpp: 0,
+      cardMultiplier: 1.0,
       effect: (CardContext ctx) {
-        final int ops = ctx.getStat<int>('ore_per_second');
-        ctx.setStat<int>('ore_per_second', ops + 1);
+        final double sps = ctx.getStat<double>('shared_gold_per_sec');
+        ctx.setStat<double>('shared_gold_per_sec', sps + 1.0);
       },
       cost: _basicCost,
+      costUnits: 'gold',
+      evolution: 1,
+      isPrivate: false,
+      costMultiplier: _basicMultiplier,
+      evolveAt: 2500,
+    ),
+    GameCard(
+      cardId: 'lux_aurea_2',
+      cardName: 'Counterfeit Coin',
+      cardPack: 'lux_aurea',
+      description: 'Generate 10 shared gold per second',
+      imagePath: 'assets/lux_aurea/rank_2/lv_1_counterfeit_coin.png',
+      rarity: 2,
+      level: 1,
+      experience: 0,
+      playCount: 0,
+      playCountOpp: 0,
+      cardMultiplier: 1.0,
+      effect: (CardContext ctx) {
+        final double sps = ctx.getStat<double>('shared_gold_per_sec');
+        ctx.setStat<double>('shared_gold_per_sec', sps + 10.0);
+      },
+      cost: _basicCost,
+      costUnits: 'gold',
       evolution: 1,
       isPrivate: false,
       costMultiplier: _basicMultiplier,
@@ -128,13 +179,19 @@ class CardCatalog {
 
 int _basicCost(GameCard card, CardContext ctx) {
   final double base = pow(10, card.rarity).toDouble();
-  final double finalCost = base * card.costMultiplier(card, ctx);
+
+  // Cost is scaled by the persisted cardMultiplier.
+  final double finalCost = base * max(0.0, card.cardMultiplier);
   return finalCost.floor();
 }
 
+/// Returns an adjustment factor used to update multipliers on purchase.
+/// NOTE: This does NOT directly become the multiplier; BattleLogic applies it:
+/// - purchaser side: multiplier *= factor
+/// - other side: multiplier /= factor
 double _basicMultiplier(GameCard card, CardContext ctx) {
   final double m = 1.0 + 1.0 / card.level;
-  return pow(m, card.playCount).toDouble();
+  return m;
 }
 
 /// =============================================================
@@ -439,13 +496,14 @@ class CardDeck {
     final step = max(1, base.evolveAt);
 
     // Set experience as total XP at the start of that level.
-    // (If you prefer 0 always, change this to 0.)
     final totalXpAtLevelStart = (safeLvl - 1) * step;
 
     return base.copyWith(
       level: safeLvl,
       experience: totalXpAtLevelStart,
       playCount: 0,
+      playCountOpp: 0,
+      cardMultiplier: 1.0,
     );
   }
 

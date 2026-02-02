@@ -3,6 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'battle_logic.dart';
+import 'opponents.dart';
+
 class MainCampaignTab extends StatefulWidget {
   final VoidCallback? onBattleStarted;
 
@@ -24,8 +27,8 @@ class _MainCampaignTabState extends State<MainCampaignTab> {
   // Example opponents (replace later)
   final List<_OpponentNode> _opponents = const [
     _OpponentNode(
-      id: 'slime_scout',
-      name: 'Slime Scout',
+      id: 'campaign_opp_lv1',
+      name: 'Novice Prospector',
       subtitle: 'Level 1 • Easy',
       icon: Icons.bubble_chart,
     ),
@@ -148,8 +151,6 @@ class _MainCampaignTabState extends State<MainCampaignTab> {
     final opp = _opponents[index];
     final alreadyDefeated = _defeated.contains(index);
 
-    widget.onBattleStarted?.call();
-
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -195,7 +196,30 @@ class _MainCampaignTabState extends State<MainCampaignTab> {
                       child: OutlinedButton.icon(
                         icon: const Icon(Icons.sports_mma),
                         label: const Text('Start Battle'),
-                        onPressed: () => Navigator.of(ctx).pop(),
+                        onPressed: () async {
+                          // Prepare battle state before navigating to the battle UI.
+                          await BattleLogic.instance.init();
+                          await BattleLogic.instance.clear_game_state();
+
+                          // Player deck (from opponents.dart, id = "player_default_deck")
+                          final player = OpponentCatalog.byId('player_default_deck');
+                          if (player != null) {
+                            await BattleLogic.instance.set_player_deck(player.deck);
+                          }
+
+                          // Opponent deck (id matches opponent node id)
+                          final oppData = OpponentCatalog.byId(opp.id);
+                          if (oppData != null) {
+                            await BattleLogic.instance.set_opp_deck(oppData.deck);
+                          }
+
+                          // start game
+                          await BattleLogic.instance.init();
+                          final result = await BattleLogic.instance.start_game();
+
+                          if (ctx.mounted) Navigator.of(ctx).pop();
+                          widget.onBattleStarted?.call();
+                        },
                       ),
                     ),
                     const SizedBox(width: 12),
