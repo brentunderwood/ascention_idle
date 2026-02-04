@@ -14,6 +14,7 @@ class BattlePage extends StatefulWidget {
   final int opponentLevel;
 
   /// 0.0 = opponent winning, 1.0 = player winning
+  /// NOTE: live victory bar now uses BattleLogic.calculate_influence().
   final double victoryProgress;
 
   // Initial values only; live display reads from BattleLogic.
@@ -122,7 +123,7 @@ class _BattlePageState extends State<BattlePage> {
           : BattleLogic.instance.get_shared_quintessence(),
     );
 
-    // Apply offline progress (elapsed is floored in BattleLogic now) + ensure ticker continues.
+    // Apply offline progress + ensure ticker continues.
     await BattleLogic.instance.handle_battle_screen_open();
 
     setState(() {});
@@ -130,8 +131,6 @@ class _BattlePageState extends State<BattlePage> {
 
   @override
   Widget build(BuildContext context) {
-    final vp = widget.victoryProgress.clamp(0.0, 1.0);
-
     // surrender truly resets the battle state.
     Future<void> handleSurrender() async {
       await BattleLogic.instance.clear_game_state();
@@ -148,10 +147,24 @@ class _BattlePageState extends State<BattlePage> {
               opponentLevel: widget.opponentLevel,
               onSurrender: handleSurrender,
             ),
+
+            // ✅ Victory bar now reflects BattleLogic.calculate_influence() live.
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-              child: _VictoryBar(progress: vp),
+              child: AnimatedBuilder(
+                animation: BattleLogic.instance,
+                builder: (context, _) {
+                  double vp = 0.5;
+                  try {
+                    vp = BattleLogic.instance.calculate_influence();
+                  } catch (_) {
+                    vp = 0.5;
+                  }
+                  return _VictoryBar(progress: vp.clamp(0.0, 1.0));
+                },
+              ),
             ),
+
             Expanded(
               child: Row(
                 children: [
@@ -255,6 +268,7 @@ class _BattlePageState extends State<BattlePage> {
                           final playerCost = (playerCard == null) ? null : logic.get_card_cost_sync(playerCard);
 
                           final playerPurchasable = logic.check_purchasable_player(playerCard);
+                          final oppPurchasable = logic.check_purchasable(oppCard, opponentPerspective: true);
 
                           String costLabel(GameCard? c, int? cost) {
                             if (c == null || cost == null) return '';
@@ -286,7 +300,7 @@ class _BattlePageState extends State<BattlePage> {
                                         aspect: BattlePage._cardAspect,
                                         maxHeight: BattlePage._cardMaxHeight,
                                         rotate180: true,
-                                        greyedOut: false,
+                                        greyedOut: !oppPurchasable,
                                         onTap: null, // opponent card NOT tappable
                                       ),
                                       const SizedBox(height: 6),

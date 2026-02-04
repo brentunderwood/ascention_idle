@@ -44,6 +44,41 @@ import '../cards/card_catalog.dart';
 /// - When loading a current card from SharedPrefs, we ALWAYS inject the latest
 ///   persisted multiplier for that cardId+side so cost updates immediately
 ///   after purchases.
+///
+/// Opponent AI:
+/// - On every tick, select_action() is evaluated.
+/// - If the chosen action is "play" AND the opponent can afford the card,
+///   the opponent purchases its current card.
+///
+/// NEW: Total resources tracking + influence
+/// - player_total_resources increases when:
+///     * any shared resource increases (stored delta > 0)
+///     * player private gold increases (delta > 0)
+/// - opp_total_resources increases when:
+///     * any shared resource decreases (stored delta < 0, add abs(delta))
+///     * opponent private gold increases (delta > 0)
+///
+/// influence = 0.5
+///   + playerOnHand / (oppTotal + 1 + oppHourGains)
+///   - oppOnHand    / (playerTotal + 1 + playerHourGains)
+///
+/// playerOnHand = sum of positive shared values + player private gold
+/// oppOnHand    = opp private gold + abs(sum of negative shared values)
+///
+/// playerHourGains = 3600 * (sum of positive shared per-sec + player private gold per-sec)
+/// oppHourGains    = 3600 * (abs(sum of negative shared per-sec) + opp private gold per-sec)
+///
+/// -------------------------------------------------------------
+/// NEW: Hypothetical simulation for draw/play/wait evaluators
+///
+/// - We snapshot the *current* battle state into a pure Dart object (BattleState)
+///   and run hypothetical actions against that object without mutating prefs.
+/// - play_value(card): simulate purchasing that card (cost spend + per-sec effect
+///   with perspective inversion) on a copy of current state, then score with
+///   predict_outcome(hypState).
+/// - wait_value(): score predict_outcome(current state).
+/// - calculate_draw_value(): for every card in the opponent deck, compute
+///   play_value(deckCard) weighted by its probability, and return the sum.
 /// =============================================================
 
 class StartGameResult {
@@ -94,6 +129,79 @@ class _MinimalCostContext implements CardContext {
   }
 }
 
+/// -------------------------------------------------------------
+/// Pure snapshot state for hypothetical simulation (no prefs)
+/// -------------------------------------------------------------
+class BattleState {
+  // Stored PLAYER perspective values
+  double sharedGold;
+  double sharedAntimatter;
+  double sharedCombustion;
+  double sharedDeath;
+  double sharedLife;
+  double sharedQuintessence;
+
+  double playerPrivateGold;
+  double oppPrivateGold;
+
+  // Stored PLAYER perspective per-sec
+  double sharedGoldPerSec;
+  double sharedAntimatterPerSec;
+  double sharedCombustionPerSec;
+  double sharedDeathPerSec;
+  double sharedLifePerSec;
+  double sharedQuintessencePerSec;
+
+  double playerPrivateGoldPerSec;
+  double oppPrivateGoldPerSec;
+
+  // Totals
+  double playerTotalResources;
+  double oppTotalResources;
+
+  BattleState({
+    required this.sharedGold,
+    required this.sharedAntimatter,
+    required this.sharedCombustion,
+    required this.sharedDeath,
+    required this.sharedLife,
+    required this.sharedQuintessence,
+    required this.playerPrivateGold,
+    required this.oppPrivateGold,
+    required this.sharedGoldPerSec,
+    required this.sharedAntimatterPerSec,
+    required this.sharedCombustionPerSec,
+    required this.sharedDeathPerSec,
+    required this.sharedLifePerSec,
+    required this.sharedQuintessencePerSec,
+    required this.playerPrivateGoldPerSec,
+    required this.oppPrivateGoldPerSec,
+    required this.playerTotalResources,
+    required this.oppTotalResources,
+  });
+
+  BattleState copy() => BattleState(
+    sharedGold: sharedGold,
+    sharedAntimatter: sharedAntimatter,
+    sharedCombustion: sharedCombustion,
+    sharedDeath: sharedDeath,
+    sharedLife: sharedLife,
+    sharedQuintessence: sharedQuintessence,
+    playerPrivateGold: playerPrivateGold,
+    oppPrivateGold: oppPrivateGold,
+    sharedGoldPerSec: sharedGoldPerSec,
+    sharedAntimatterPerSec: sharedAntimatterPerSec,
+    sharedCombustionPerSec: sharedCombustionPerSec,
+    sharedDeathPerSec: sharedDeathPerSec,
+    sharedLifePerSec: sharedLifePerSec,
+    sharedQuintessencePerSec: sharedQuintessencePerSec,
+    playerPrivateGoldPerSec: playerPrivateGoldPerSec,
+    oppPrivateGoldPerSec: oppPrivateGoldPerSec,
+    playerTotalResources: playerTotalResources,
+    oppTotalResources: oppTotalResources,
+  );
+}
+
 class BattleLogic extends ChangeNotifier {
   BattleLogic._();
   static final BattleLogic instance = BattleLogic._();
@@ -139,7 +247,13 @@ class BattleLogic extends ChangeNotifier {
   static const String _kPlayerCardPurchasable = '${_kBattlePrefix}player_card_purchasable_v1';
 
   // -------------------------
-  // NEW: per-side per-card multiplier persistence
+  // NEW: total resources tracking
+  // -------------------------
+  static const String _kPlayerTotalResources = '${_kBattlePrefix}player_total_resources_v1';
+  static const String _kOppTotalResources = '${_kBattlePrefix}opp_total_resources_v1';
+
+  // -------------------------
+  // per-side per-card multiplier persistence
   // -------------------------
   static String _kMulPlayer(String cardId) => '${_kBattlePrefix}mul_player_$cardId';
   static String _kMulOpp(String cardId) => '${_kBattlePrefix}mul_opp_$cardId';
@@ -219,7 +333,7 @@ class BattleLogic extends ChangeNotifier {
     double elapsedSeconds = 0.0;
     if (lastMs != null) {
       final deltaMs = nowMs - lastMs;
-      if (deltaMs > 0) elapsedSeconds = (deltaMs ~/ 1000).toDouble();
+      if (deltaMs > 0) elapsedSeconds = (deltaMs ~/ 1000).toDouble(); // floored
     }
 
     if (lastMs == null) await set_last_tick_ms(nowMs);
@@ -362,6 +476,178 @@ class BattleLogic extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------
+  /// Total resources (tracked)
+  /// -------------------------------------------------------------
+  double get_player_total_resources() => _getD(_kPlayerTotalResources, 0.0);
+  double get_opp_total_resources() => _getD(_kOppTotalResources, 0.0);
+
+  Future<void> _set_player_total_resources(double v) async {
+    if (!_inited) await init();
+    _requireInit();
+    await _prefs!.setDouble(_kPlayerTotalResources, v.isFinite ? max(0.0, v) : 0.0);
+  }
+
+  Future<void> _set_opp_total_resources(double v) async {
+    if (!_inited) await init();
+    _requireInit();
+    await _prefs!.setDouble(_kOppTotalResources, v.isFinite ? max(0.0, v) : 0.0);
+  }
+
+  /// -------------------------------------------------------------
+  /// Influence (sync) (PERSISTED STATE)
+  /// -------------------------------------------------------------
+  double calculate_influence() {
+    _requireInit();
+    final s = _snapshot_state();
+    return _calculate_influence_for_state(s).clamp(0.0, 1.0);
+  }
+
+  /// -------------------------------------------------------------
+  /// Hypothetical evaluators + prediction
+  /// -------------------------------------------------------------
+
+  /// Predict outcome score for a hypothetical state.
+  ///
+  /// - Simulates forward until influence hits <= 0 or >= 1 (first moment).
+  /// - If influence hits 0:  score =  1 / seconds
+  /// - If influence hits 1:  score = -1 / seconds
+  ///
+  /// Uses a 1-second step simulation with a max cap to avoid infinite loops.
+  double predict_outcome(BattleState initial) {
+    // Safety
+    const int maxSeconds = 60*60*24*365; // 24 hours cap
+    final s = initial.copy();
+
+    double inf0 = _calculate_influence_for_state(s);
+    if (!inf0.isFinite) inf0 = 0.5;
+
+    // If already terminal, treat as 1 second to avoid division by zero.
+    if (inf0 <= 0.0) return 1.0 / 1.0;
+    if (inf0 >= 1.0) return -1.0 / 1.0;
+
+    for (int t = 1; t <= maxSeconds; t=(t*1.1).floor()) {
+      _simulate_tick_for_state(s, (t/11.0).ceilToDouble());
+
+      double inf = _calculate_influence_for_state(s);
+      if (!inf.isFinite) inf = 0.5;
+
+      if (inf <= 0.0) {
+        return 1.0 / t.toDouble();
+      }
+      if (inf >= 1.0) {
+        return -1.0 / t.toDouble();
+      }
+    }
+
+    // If no terminal within cap, treat as "neutral / very slow resolution".
+    return 0.0;
+  }
+
+  /// Wait = prediction from the current state (no action).
+  double wait_value() {
+    _requireInit();
+    final s = _snapshot_state();
+    return predict_outcome(s);
+  }
+
+  /// Play = prediction from state after hypothetically playing the given card.
+  ///
+  /// NOTE: for opponent AI, this will typically be called with opponentPerspective=true.
+  double play_value(GameCard card, {bool opponentPerspective = true}) {
+    _requireInit();
+    final base = _snapshot_state();
+    final hyp = base.copy();
+
+    final ok = _simulate_purchase_for_state(
+      hyp,
+      card,
+      opponentPerspective: opponentPerspective,
+    );
+
+    if (!ok) {
+      // If can't play, treat as "just wait".
+      return predict_outcome(base);
+    }
+
+    return predict_outcome(hyp);
+  }
+
+  /// Draw = expected play prediction across every card in opponent's deck,
+  /// weighted by deck probability.
+  ///
+  /// (Your spec: "run a play card prediction for every card in the opponents deck
+  /// and weight it by the probability associated with that card.")
+  double calculate_draw_value() {
+    _requireInit();
+
+    final deck = get_opp_deck_sync();
+    if (deck == null || deck.entries.isEmpty) return wait_value();
+
+    // Snapshot once; each play simulation starts from the same current state.
+    final baseState = _snapshot_state();
+
+    double totalWeight = 0.0;
+    double sum = 0.0;
+
+    for (final e in deck.entries) {
+      final w = e.probability;
+      if (!w.isFinite || w <= 0) continue;
+
+      // Build the exact card instance the opponent would draw (deck-fixed level + injected multiplier)
+      final card = _buildDeckFixedCard(e, forOppDeck: true);
+      if (card == null) continue;
+
+      totalWeight += w;
+
+      final hyp = baseState.copy();
+      final ok = _simulate_purchase_for_state(hyp, card, opponentPerspective: true);
+
+      final score = ok ? predict_outcome(hyp) : predict_outcome(baseState);
+      sum += w * score;
+    }
+
+    if (totalWeight <= 0) return wait_value();
+    return sum / totalWeight;
+  }
+
+  /// Returns "draw", "play", or "wait" based on which value is highest.
+  /// "play" is only considered if the opponent can actually purchase the opponent card.
+  String select_action() {
+    _requireInit();
+
+    final oppCard = get_opp_current_card_sync();
+
+    final drawV = calculate_draw_value();
+    final waitV = wait_value();
+
+    double playV = -1e18;
+    final canPlay = check_purchasable(oppCard, opponentPerspective: true);
+    if (oppCard != null && canPlay) {
+      playV = play_value(oppCard, opponentPerspective: true);
+    }
+
+    // Deterministic tie-breaking:
+    // Prefer play, then draw, then wait (when values are equal).
+    if (playV >= drawV && playV >= waitV) return 'play';
+    if (drawV >= waitV) return 'draw';
+    return 'wait';
+  }
+
+  Future<void> _run_opponent_action_if_needed({Random? rng}) async {
+    if (!_inited) await init();
+    _requireInit();
+
+    rng ??= Random();
+
+    final action = select_action();
+    if (action == 'play') {
+      // purchase_current_card already checks affordability again.
+      await purchase_current_card(rng: rng, opponentPerspective: true);
+    }
+    // For now, "draw" and "wait" do not trigger any state change.
+  }
+
+  /// -------------------------------------------------------------
   /// update_tick
   /// -------------------------------------------------------------
   Future<void> update_tick(double speedMultiplier) async {
@@ -374,15 +660,16 @@ class BattleLogic extends ChangeNotifier {
       return;
     }
 
-    final oppGold = get_opp_private_gold();
-    final playerGold = get_player_private_gold();
+    // Read old values
+    final oldOppGold = get_opp_private_gold();
+    final oldPlayerGold = get_player_private_gold();
 
-    final sharedGold = get_shared_gold();
-    final sharedAnti = get_shared_antimatter();
-    final sharedComb = get_shared_combustion();
-    final sharedDeath = get_shared_death();
-    final sharedLife = get_shared_life();
-    final sharedQuint = get_shared_quintessence();
+    final oldSharedGold = get_shared_gold();
+    final oldSharedAnti = get_shared_antimatter();
+    final oldSharedComb = get_shared_combustion();
+    final oldSharedDeath = get_shared_death();
+    final oldSharedLife = get_shared_life();
+    final oldSharedQuint = get_shared_quintessence();
 
     final oppGoldPs = get_opp_private_gold_per_sec();
     final playerGoldPs = get_player_private_gold_per_sec();
@@ -394,18 +681,75 @@ class BattleLogic extends ChangeNotifier {
     final sharedLifePs = get_shared_life_per_sec();
     final sharedQuintPs = get_shared_quintessence_per_sec();
 
-    await _prefs!.setDouble(_kOppPrivateGold, oppGold + oppGoldPs * m);
-    await _prefs!.setDouble(_kPlayerPrivateGold, playerGold + playerGoldPs * m);
+    // Compute new values
+    final newOppGold = oldOppGold + oppGoldPs * m;
+    final newPlayerGold = oldPlayerGold + playerGoldPs * m;
 
-    await _prefs!.setDouble(_kSharedGold, sharedGold + sharedGoldPs * m);
-    await _prefs!.setDouble(_kSharedAntimatter, sharedAnti + sharedAntiPs * m);
-    await _prefs!.setDouble(_kSharedCombustion, sharedComb + sharedCombPs * m);
-    await _prefs!.setDouble(_kSharedDeath, sharedDeath + sharedDeathPs * m);
-    await _prefs!.setDouble(_kSharedLife, sharedLife + sharedLifePs * m);
-    await _prefs!.setDouble(_kSharedQuintessence, sharedQuint + sharedQuintPs * m);
+    final newSharedGold = oldSharedGold + sharedGoldPs * m;
+    final newSharedAnti = oldSharedAnti + sharedAntiPs * m;
+    final newSharedComb = oldSharedComb + sharedCombPs * m;
+    final newSharedDeath = oldSharedDeath + sharedDeathPs * m;
+    final newSharedLife = oldSharedLife + sharedLifePs * m;
+    final newSharedQuint = oldSharedQuint + sharedQuintPs * m;
+
+    // Deltas
+    final dOppGold = newOppGold - oldOppGold;
+    final dPlayerGold = newPlayerGold - oldPlayerGold;
+
+    final dSharedGold = newSharedGold - oldSharedGold;
+    final dSharedAnti = newSharedAnti - oldSharedAnti;
+    final dSharedComb = newSharedComb - oldSharedComb;
+    final dSharedDeath = newSharedDeath - oldSharedDeath;
+    final dSharedLife = newSharedLife - oldSharedLife;
+    final dSharedQuint = newSharedQuint - oldSharedQuint;
+
+    // Update totals (per your rules)
+    double playerTotal = get_player_total_resources();
+    double oppTotal = get_opp_total_resources();
+
+    void applySharedDelta(double d) {
+      if (!d.isFinite || d == 0) return;
+      if (d > 0) {
+        playerTotal += d;
+      } else {
+        oppTotal += (-d);
+      }
+    }
+
+    applySharedDelta(dSharedGold);
+    applySharedDelta(dSharedAnti);
+    applySharedDelta(dSharedComb);
+    applySharedDelta(dSharedDeath);
+    applySharedDelta(dSharedLife);
+    applySharedDelta(dSharedQuint);
+
+    if (dPlayerGold.isFinite && dPlayerGold > 0) {
+      playerTotal += dPlayerGold;
+    }
+    if (dOppGold.isFinite && dOppGold > 0) {
+      oppTotal += dOppGold;
+    }
+
+    await _set_player_total_resources(playerTotal);
+    await _set_opp_total_resources(oppTotal);
+
+    // Persist new resource values
+    await _prefs!.setDouble(_kOppPrivateGold, newOppGold);
+    await _prefs!.setDouble(_kPlayerPrivateGold, newPlayerGold);
+
+    await _prefs!.setDouble(_kSharedGold, newSharedGold);
+    await _prefs!.setDouble(_kSharedAntimatter, newSharedAnti);
+    await _prefs!.setDouble(_kSharedCombustion, newSharedComb);
+    await _prefs!.setDouble(_kSharedDeath, newSharedDeath);
+    await _prefs!.setDouble(_kSharedLife, newSharedLife);
+    await _prefs!.setDouble(_kSharedQuintessence, newSharedQuint);
 
     await set_last_tick_ms(DateTime.now().millisecondsSinceEpoch);
     await _recompute_and_store_player_card_purchasable();
+
+    // Opponent selects action every tick; if "play" then purchase.
+    await _run_opponent_action_if_needed();
+
     notifyListeners();
   }
 
@@ -418,7 +762,7 @@ class BattleLogic extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------
-  /// Perspective helpers
+  /// Perspective helpers (PERSISTED)
   /// -------------------------------------------------------------
   double _shared_persp_value_for_units(String units, {required bool opponentPerspective}) {
     double stored;
@@ -504,7 +848,7 @@ class BattleLogic extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------
-  /// Purchasability check (player/opponent)
+  /// Purchasability check (player/opponent) (PERSISTED)
   /// -------------------------------------------------------------
   bool check_purchasable(GameCard? card, {bool opponentPerspective = false}) {
     if (card == null) return false;
@@ -538,7 +882,7 @@ class BattleLogic extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------
-  /// Spend helpers
+  /// Spend helpers (PERSISTED)
   /// -------------------------------------------------------------
   Future<bool> _spend_cost_for_card({
     required int cost,
@@ -914,5 +1258,447 @@ class BattleLogic extends ChangeNotifier {
       experience: xp < 0 ? 0 : xp,
       cardMultiplier: mul,
     );
+  }
+
+  /// =============================================================
+  /// Hypothetical helpers (pure functions over BattleState)
+  /// =============================================================
+
+  BattleState _snapshot_state() {
+    _requireInit();
+    return BattleState(
+      sharedGold: get_shared_gold(),
+      sharedAntimatter: get_shared_antimatter(),
+      sharedCombustion: get_shared_combustion(),
+      sharedDeath: get_shared_death(),
+      sharedLife: get_shared_life(),
+      sharedQuintessence: get_shared_quintessence(),
+      playerPrivateGold: get_player_private_gold(),
+      oppPrivateGold: get_opp_private_gold(),
+      sharedGoldPerSec: get_shared_gold_per_sec(),
+      sharedAntimatterPerSec: get_shared_antimatter_per_sec(),
+      sharedCombustionPerSec: get_shared_combustion_per_sec(),
+      sharedDeathPerSec: get_shared_death_per_sec(),
+      sharedLifePerSec: get_shared_life_per_sec(),
+      sharedQuintessencePerSec: get_shared_quintessence_per_sec(),
+      playerPrivateGoldPerSec: get_player_private_gold_per_sec(),
+      oppPrivateGoldPerSec: get_opp_private_gold_per_sec(),
+      playerTotalResources: get_player_total_resources(),
+      oppTotalResources: get_opp_total_resources(),
+    );
+  }
+
+  double _calculate_influence_for_state(BattleState s) {
+    // Current values (stored PLAYER perspective)
+    final sg = s.sharedGold;
+    final sa = s.sharedAntimatter;
+    final sc = s.sharedCombustion;
+    final sd = s.sharedDeath;
+    final sl = s.sharedLife;
+    final sq = s.sharedQuintessence;
+
+    final pg = s.playerPrivateGold;
+    final og = s.oppPrivateGold;
+
+    // On-hand
+    final playerOnHand =
+        (sg > 0 ? sg : 0.0) +
+            (sa > 0 ? sa : 0.0) +
+            (sc > 0 ? sc : 0.0) +
+            (sd > 0 ? sd : 0.0) +
+            (sl > 0 ? sl : 0.0) +
+            (sq > 0 ? sq : 0.0) +
+            (pg.isFinite ? pg : 0.0);
+
+    final negSharedSum =
+        (sg < 0 ? sg : 0.0) +
+            (sa < 0 ? sa : 0.0) +
+            (sc < 0 ? sc : 0.0) +
+            (sd < 0 ? sd : 0.0) +
+            (sl < 0 ? sl : 0.0) +
+            (sq < 0 ? sq : 0.0);
+
+    final oppOnHand = (og.isFinite ? og : 0.0) + negSharedSum.abs();
+
+    // 1 hour gains (per-sec)
+    final sgps = s.sharedGoldPerSec;
+    final saps = s.sharedAntimatterPerSec;
+    final scps = s.sharedCombustionPerSec;
+    final sdps = s.sharedDeathPerSec;
+    final slps = s.sharedLifePerSec;
+    final sqps = s.sharedQuintessencePerSec;
+
+    final pgps = s.playerPrivateGoldPerSec;
+    final ogps = s.oppPrivateGoldPerSec;
+
+    final playerPosPs =
+        (sgps > 0 ? sgps : 0.0) +
+            (saps > 0 ? saps : 0.0) +
+            (scps > 0 ? scps : 0.0) +
+            (sdps > 0 ? sdps : 0.0) +
+            (slps > 0 ? slps : 0.0) +
+            (sqps > 0 ? sqps : 0.0) +
+            (pgps > 0 ? pgps : 0.0);
+
+    final oppNegSharedPs =
+        (sgps < 0 ? sgps : 0.0) +
+            (saps < 0 ? saps : 0.0) +
+            (scps < 0 ? scps : 0.0) +
+            (sdps < 0 ? sdps : 0.0) +
+            (slps < 0 ? slps : 0.0) +
+            (sqps < 0 ? sqps : 0.0);
+
+    final playerHourGains = 3600.0 * playerPosPs;
+    final oppHourGains = 3600.0 * (oppNegSharedPs.abs() + (ogps > 0 ? ogps : 0.0));
+
+    final playerTotal = s.playerTotalResources;
+    final oppTotal = s.oppTotalResources;
+
+    final denomOpp = (oppTotal + 1.0 + oppHourGains);
+    final denomPlayer = (playerTotal + 1.0 + playerHourGains);
+
+    final safeDenomOpp = denomOpp.isFinite && denomOpp > 0 ? denomOpp : 1.0;
+    final safeDenomPlayer = denomPlayer.isFinite && denomPlayer > 0 ? denomPlayer : 1.0;
+
+    final influence = 0.5 + (playerOnHand / safeDenomOpp) - (oppOnHand / safeDenomPlayer);
+
+    if (!influence.isFinite) return 0.5;
+    return influence;
+  }
+
+  void _simulate_tick_for_state(BattleState s, double dt) {
+    final m = (!dt.isFinite || dt <= 0) ? 0.0 : dt;
+    if (m <= 0) return;
+
+    final oldOppGold = s.oppPrivateGold;
+    final oldPlayerGold = s.playerPrivateGold;
+
+    final oldSharedGold = s.sharedGold;
+    final oldSharedAnti = s.sharedAntimatter;
+    final oldSharedComb = s.sharedCombustion;
+    final oldSharedDeath = s.sharedDeath;
+    final oldSharedLife = s.sharedLife;
+    final oldSharedQuint = s.sharedQuintessence;
+
+    // Apply per-sec deltas
+    s.oppPrivateGold = oldOppGold + s.oppPrivateGoldPerSec * m;
+    s.playerPrivateGold = oldPlayerGold + s.playerPrivateGoldPerSec * m;
+
+    s.sharedGold = oldSharedGold + s.sharedGoldPerSec * m;
+    s.sharedAntimatter = oldSharedAnti + s.sharedAntimatterPerSec * m;
+    s.sharedCombustion = oldSharedComb + s.sharedCombustionPerSec * m;
+    s.sharedDeath = oldSharedDeath + s.sharedDeathPerSec * m;
+    s.sharedLife = oldSharedLife + s.sharedLifePerSec * m;
+    s.sharedQuintessence = oldSharedQuint + s.sharedQuintessencePerSec * m;
+
+    // Deltas for totals tracking
+    final dOppGold = s.oppPrivateGold - oldOppGold;
+    final dPlayerGold = s.playerPrivateGold - oldPlayerGold;
+
+    final dSharedGold = s.sharedGold - oldSharedGold;
+    final dSharedAnti = s.sharedAntimatter - oldSharedAnti;
+    final dSharedComb = s.sharedCombustion - oldSharedComb;
+    final dSharedDeath = s.sharedDeath - oldSharedDeath;
+    final dSharedLife = s.sharedLife - oldSharedLife;
+    final dSharedQuint = s.sharedQuintessence - oldSharedQuint;
+
+    void applySharedDelta(double d) {
+      if (!d.isFinite || d == 0) return;
+      if (d > 0) {
+        s.playerTotalResources += d;
+      } else {
+        s.oppTotalResources += (-d);
+      }
+    }
+
+    applySharedDelta(dSharedGold);
+    applySharedDelta(dSharedAnti);
+    applySharedDelta(dSharedComb);
+    applySharedDelta(dSharedDeath);
+    applySharedDelta(dSharedLife);
+    applySharedDelta(dSharedQuint);
+
+    if (dPlayerGold.isFinite && dPlayerGold > 0) s.playerTotalResources += dPlayerGold;
+    if (dOppGold.isFinite && dOppGold > 0) s.oppTotalResources += dOppGold;
+
+    if (!s.playerTotalResources.isFinite || s.playerTotalResources < 0) s.playerTotalResources = 0.0;
+    if (!s.oppTotalResources.isFinite || s.oppTotalResources < 0) s.oppTotalResources = 0.0;
+  }
+
+  double _shared_persp_value_for_units_state(BattleState s, String units, {required bool opponentPerspective}) {
+    double stored;
+    switch (units) {
+      case 'gold':
+        stored = s.sharedGold;
+        break;
+      case 'antimatter':
+        stored = s.sharedAntimatter;
+        break;
+      case 'combustion':
+        stored = s.sharedCombustion;
+        break;
+      case 'death':
+        stored = s.sharedDeath;
+        break;
+      case 'life':
+        stored = s.sharedLife;
+        break;
+      case 'quintessence':
+        stored = s.sharedQuintessence;
+        break;
+      default:
+        stored = 0.0;
+        break;
+    }
+    return opponentPerspective ? -stored : stored;
+  }
+
+  void _set_shared_persp_value_for_units_state(
+      BattleState s,
+      String units,
+      double newPerspValue, {
+        required bool opponentPerspective,
+      }) {
+    final storedNew = opponentPerspective ? -newPerspValue : newPerspValue;
+    switch (units) {
+      case 'gold':
+        s.sharedGold = storedNew;
+        break;
+      case 'antimatter':
+        s.sharedAntimatter = storedNew;
+        break;
+      case 'combustion':
+        s.sharedCombustion = storedNew;
+        break;
+      case 'death':
+        s.sharedDeath = storedNew;
+        break;
+      case 'life':
+        s.sharedLife = storedNew;
+        break;
+      case 'quintessence':
+        s.sharedQuintessence = storedNew;
+        break;
+      default:
+        break;
+    }
+  }
+
+  double _shared_persp_per_sec_state(BattleState s, String units, {required bool opponentPerspective}) {
+    double stored;
+    switch (units) {
+      case 'gold':
+        stored = s.sharedGoldPerSec;
+        break;
+      case 'antimatter':
+        stored = s.sharedAntimatterPerSec;
+        break;
+      case 'combustion':
+        stored = s.sharedCombustionPerSec;
+        break;
+      case 'death':
+        stored = s.sharedDeathPerSec;
+        break;
+      case 'life':
+        stored = s.sharedLifePerSec;
+        break;
+      case 'quintessence':
+        stored = s.sharedQuintessencePerSec;
+        break;
+      default:
+        stored = 0.0;
+        break;
+    }
+    return opponentPerspective ? -stored : stored;
+  }
+
+  void _set_shared_persp_per_sec_state(
+      BattleState s,
+      String units,
+      double newPerspPerSec, {
+        required bool opponentPerspective,
+      }) {
+    final storedNew = opponentPerspective ? -newPerspPerSec : newPerspPerSec;
+    switch (units) {
+      case 'gold':
+        s.sharedGoldPerSec = storedNew;
+        break;
+      case 'antimatter':
+        s.sharedAntimatterPerSec = storedNew;
+        break;
+      case 'combustion':
+        s.sharedCombustionPerSec = storedNew;
+        break;
+      case 'death':
+        s.sharedDeathPerSec = storedNew;
+        break;
+      case 'life':
+        s.sharedLifePerSec = storedNew;
+        break;
+      case 'quintessence':
+        s.sharedQuintessencePerSec = storedNew;
+        break;
+      default:
+        break;
+    }
+  }
+
+  double _private_gold_state(BattleState s, {required bool opponentPerspective}) {
+    return opponentPerspective ? s.oppPrivateGold : s.playerPrivateGold;
+  }
+
+  void _set_private_gold_state(BattleState s, double v, {required bool opponentPerspective}) {
+    if (opponentPerspective) {
+      s.oppPrivateGold = v;
+    } else {
+      s.playerPrivateGold = v;
+    }
+  }
+
+  bool _check_purchasable_state(BattleState s, GameCard card, {required bool opponentPerspective}) {
+    final cost = get_card_cost_sync(card);
+    if (cost <= 0) return true;
+
+    final units = card.costUnits.toLowerCase().trim();
+    final privateAvail = max(0.0, _private_gold_state(s, opponentPerspective: opponentPerspective));
+
+    if (units == 'gold') {
+      final sharedAvail = max(0.0, _shared_persp_value_for_units_state(s, 'gold', opponentPerspective: opponentPerspective));
+      return (sharedAvail + privateAvail) >= cost;
+    }
+
+    final sharedAvail = max(0.0, _shared_persp_value_for_units_state(s, units, opponentPerspective: opponentPerspective));
+    return sharedAvail >= cost;
+  }
+
+  bool _spend_cost_for_card_state(
+      BattleState s, {
+        required int cost,
+        required String units,
+        required bool opponentPerspective,
+      }) {
+    if (cost <= 0) return true;
+
+    final u = units.toLowerCase().trim();
+
+    if (u == 'gold') {
+      final sharedGoldPersp = _shared_persp_value_for_units_state(s, 'gold', opponentPerspective: opponentPerspective);
+      final privateGoldPersp = _private_gold_state(s, opponentPerspective: opponentPerspective);
+
+      final sharedAvail = max(0.0, sharedGoldPersp);
+      final privateAvail = max(0.0, privateGoldPersp);
+
+      if ((sharedAvail + privateAvail) < cost) return false;
+
+      // Spend shared first, then private
+      final useShared = min(sharedAvail, cost.toDouble());
+      final remaining = cost.toDouble() - useShared;
+
+      _set_shared_persp_value_for_units_state(
+        s,
+        'gold',
+        sharedGoldPersp - useShared,
+        opponentPerspective: opponentPerspective,
+      );
+
+      if (remaining > 0) {
+        _set_private_gold_state(
+          s,
+          privateGoldPersp - remaining,
+          opponentPerspective: opponentPerspective,
+        );
+      }
+
+      return true;
+    }
+
+    final sharedPersp = _shared_persp_value_for_units_state(s, u, opponentPerspective: opponentPerspective);
+    final sharedAvail = max(0.0, sharedPersp);
+    if (sharedAvail < cost) return false;
+
+    _set_shared_persp_value_for_units_state(
+      s,
+      u,
+      sharedPersp - cost.toDouble(),
+      opponentPerspective: opponentPerspective,
+    );
+    return true;
+  }
+
+  bool _simulate_purchase_for_state(
+      BattleState s,
+      GameCard card, {
+        required bool opponentPerspective,
+      }) {
+    // Affordability
+    if (!_check_purchasable_state(s, card, opponentPerspective: opponentPerspective)) return false;
+
+    final cost = get_card_cost_sync(card);
+    final units = card.costUnits.toLowerCase().trim();
+
+    if (cost > 0) {
+      final spent = _spend_cost_for_card_state(
+        s,
+        cost: cost,
+        units: units,
+        opponentPerspective: opponentPerspective,
+      );
+      if (!spent) return false;
+    }
+
+    // Apply effect with perspective inversion:
+    // We provide per-sec stats to the card in "perspective space"
+    // and then write back to stored PLAYER perspective.
+    final ctx = _MinimalCostContext();
+
+    // Seed all shared per-sec stats (future-proof for more card types)
+    ctx.setStat<double>('shared_gold_per_sec', _shared_persp_per_sec_state(s, 'gold', opponentPerspective: opponentPerspective));
+    ctx.setStat<double>('shared_antimatter_per_sec', _shared_persp_per_sec_state(s, 'antimatter', opponentPerspective: opponentPerspective));
+    ctx.setStat<double>('shared_combustion_per_sec', _shared_persp_per_sec_state(s, 'combustion', opponentPerspective: opponentPerspective));
+    ctx.setStat<double>('shared_death_per_sec', _shared_persp_per_sec_state(s, 'death', opponentPerspective: opponentPerspective));
+    ctx.setStat<double>('shared_life_per_sec', _shared_persp_per_sec_state(s, 'life', opponentPerspective: opponentPerspective));
+    ctx.setStat<double>('shared_quintessence_per_sec', _shared_persp_per_sec_state(s, 'quintessence', opponentPerspective: opponentPerspective));
+
+    card.effect(ctx);
+
+    // Write back any changes (if key not touched, it will read as seeded value)
+    _set_shared_persp_per_sec_state(
+      s,
+      'gold',
+      ctx.getStat<double>('shared_gold_per_sec'),
+      opponentPerspective: opponentPerspective,
+    );
+    _set_shared_persp_per_sec_state(
+      s,
+      'antimatter',
+      ctx.getStat<double>('shared_antimatter_per_sec'),
+      opponentPerspective: opponentPerspective,
+    );
+    _set_shared_persp_per_sec_state(
+      s,
+      'combustion',
+      ctx.getStat<double>('shared_combustion_per_sec'),
+      opponentPerspective: opponentPerspective,
+    );
+    _set_shared_persp_per_sec_state(
+      s,
+      'death',
+      ctx.getStat<double>('shared_death_per_sec'),
+      opponentPerspective: opponentPerspective,
+    );
+    _set_shared_persp_per_sec_state(
+      s,
+      'life',
+      ctx.getStat<double>('shared_life_per_sec'),
+      opponentPerspective: opponentPerspective,
+    );
+    _set_shared_persp_per_sec_state(
+      s,
+      'quintessence',
+      ctx.getStat<double>('shared_quintessence_per_sec'),
+      opponentPerspective: opponentPerspective,
+    );
+
+    return true;
   }
 }
